@@ -41,7 +41,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
             # bwrap is built (and hashed) in its own step before the main build.
             binaries: "asxs-proxy codex-code-mode-host"
-          - runner: windows-2022
+          # windows-2025: setup-ci provisions a Dev Drive, which windows-2022 lacks.
+          - runner: windows-2025
             target: x86_64-pc-windows-msvc
             binaries: "asxs-proxy codex-code-mode-host codex-command-runner codex-windows-sandbox-setup"
     defaults:

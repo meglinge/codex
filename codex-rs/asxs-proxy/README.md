@@ -46,8 +46,9 @@ cargo build -p asxs-proxy            # -> target/debug/asxs-proxy.exe
 cargo build -p asxs-proxy --release
 ```
 
-(`D:\MegAiTools\ASXSProxy` is a junction to the same directory; cargo must be
-run through the workspace path so it can find the root manifest.)
+(On the dev machine the sources live in `D:\MegAiTools\ASXSProxy` and
+`codex-rs\asxs-proxy` is a junction to it; cargo must be run through the
+workspace path so it can find the root manifest.)
 
 ### CI
 

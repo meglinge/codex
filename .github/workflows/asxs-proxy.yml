@@ -93,6 +93,14 @@ jobs:
           cache-targets: false
           shared-key: asxs-proxy-${{ matrix.target }}
 
+      # setup-rusty-v8 runs a Python script that needs tomllib (3.11+);
+      # ubuntu-22.04 ships 3.10.
+      - name: Install Python 3.12 (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # codex-code-mode-host links V8; use the prebuilt archives from the
       # upstream openai/codex `rusty-v8-v*` releases instead of building V8.
       - name: Configure rusty_v8 artifact overrides and verify checksums

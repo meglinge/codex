@@ -1146,6 +1146,7 @@ impl ThreadRequestProcessor {
             selected_capability_roots,
             mock_experimental_field: _mock_experimental_field,
             experimental_raw_events,
+            initial_history,
             personality,
             multi_agent_mode: _multi_agent_mode,
             ephemeral,
@@ -1245,6 +1246,7 @@ impl ThreadRequestProcessor {
                 service_name,
                 allow_provider_model_fallback,
                 experimental_raw_events,
+                initial_history,
                 request_trace,
                 initial_config_warnings,
             )
@@ -1324,6 +1326,7 @@ impl ThreadRequestProcessor {
         service_name: Option<String>,
         allow_provider_model_fallback: bool,
         experimental_raw_events: bool,
+        initial_history: Option<Vec<ResponseItem>>,
         request_trace: Option<W3cTraceContext>,
         initial_config_warnings: Arc<Vec<ConfigWarningNotification>>,
     ) -> Result<(), JSONRPCErrorError> {
@@ -1460,11 +1463,22 @@ impl ThreadRequestProcessor {
             .thread_manager
             .start_thread(StartThreadOptions {
                 allow_provider_model_fallback,
-                initial_history: match session_start_source
-                    .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
-                {
-                    codex_app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
-                    codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
+                initial_history: match initial_history {
+                    // ASXS extension: start from client-provided history, like
+                    // `thread/resume.history`, but on a fresh thread that keeps
+                    // `dynamicTools` / `experimentalRawEvents`.
+                    Some(items) if !items.is_empty() => InitialHistory::Forked(
+                        items
+                            .into_iter()
+                            .map(|item| RolloutItem::ResponseItem(item.into()))
+                            .collect(),
+                    ),
+                    _ => match session_start_source
+                        .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
+                    {
+                        codex_app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
+                        codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
+                    },
                 },
                 history_mode,
                 thread_source,

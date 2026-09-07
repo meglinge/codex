@@ -1,0 +1,4 @@
+/data/
+/asxsproxy.toml
+/target/
+*.log

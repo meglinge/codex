@@ -156,6 +156,12 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.experimentalRawEvents")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub experimental_raw_events: bool,
+    /// ASXS extension: seed a brand-new thread with prior Responses API items
+    /// (same semantics as `thread/resume.history`) while keeping `thread/start`
+    /// features such as `dynamicTools` and `experimentalRawEvents`.
+    #[experimental("thread/start.initialHistory")]
+    #[ts(optional = nullable)]
+    pub initial_history: Option<Vec<ResponseItem>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS)]

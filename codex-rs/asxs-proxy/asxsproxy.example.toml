@@ -1,0 +1,77 @@
+# asxs-proxy configuration. Copy to `asxsproxy.toml` next to the binary (or
+# point at it with `--config` / `ASXSPROXY_CONFIG`). Every key is optional.
+
+[listen]
+host = "127.0.0.1"
+port = 8790
+
+# API keys accepted in `Authorization: Bearer …` (or `x-api-key`).
+# Empty list = no authentication (local use only).
+api_keys = []
+
+# One entry per Codex login. Each `codex_home` must contain the `auth.json`
+# produced by `codex login` (and may carry its own `config.toml`). One
+# in-process app-server runs per account; a session is pinned to the account
+# that created it.
+[[accounts]]
+id = "default"
+codex_home = "~/.codex"
+max_concurrent_turns = 4
+
+[codex]
+# `clientInfo.name` on initialize -> upstream `originator` header. Keep equal to
+# what the interactive CLI sends so traffic is indistinguishable from it.
+client_name = "codex-tui"
+# client_version = "0.153.4"
+# Real codex binary used for helper re-execs (Windows sandbox helpers etc.).
+# codex_self_exe = "D:/MegAiTools/codex/codex-rs/target/debug/codex.exe"
+# Auto-answer for approval prompts: "accept" | "decline".
+approvals = "accept"
+# Session source recorded in thread metadata: "cli" | "vscode" | "exec".
+session_source = "cli"
+
+[defaults]
+# Empty = the account's config.toml `model`.
+model = ""
+reasoning_effort = ""      # low | medium | high | xhigh | …
+reasoning_summary = ""     # auto | concise | detailed | none
+sandbox = "read-only"      # read-only | workspace-write | danger-full-access
+approval_policy = "never"  # never | on-request | untrusted
+# full = keep Codex's own tools (shell, apply_patch, update_plan, web search…):
+#        the request on the wire is exactly a normal Codex turn.
+# none = disable Codex's built-in tools; only the client's tools are offered.
+codex_tools = "full"
+# developer = client system prompt -> `developerInstructions`; ignore = drop it.
+system_prompt_mode = "developer"
+ephemeral = false
+personality = ""           # friendly | pragmatic | none
+service_tier = ""          # fast | default
+
+# Extra dotted config.toml overrides for every thread (same as `codex -c k=v`).
+[defaults.config_overrides]
+# "model_reasoning_effort" = "high"
+
+# Per-session working directories are created under here.
+workspace_root = "data/workspaces"
+
+[sessions]
+idle_ttl_secs = 21600
+tool_result_timeout_secs = 900
+# How a brand-new session receives history the client sent for a conversation
+# the proxy has no live session for:
+#   preamble = fold prior turns into the first user message (stock codex)
+#   patch    = `initialHistory` on thread/start (requires the ASXS codex patch)
+#   reject   = HTTP 400
+history_seeding = "preamble"
+
+[api]
+# Responses API: emit Codex-internal activity (commands, file edits, web
+# searches) as `codex_activity` output items.
+expose_activity = true
+# Chat Completions: stream reasoning summaries as `reasoning_content`.
+chat_reasoning_content = true
+# Chat Completions: also stream Codex activity lines into `reasoning_content`.
+chat_activity_in_reasoning = true
+
+# tracing filter (overridden by RUST_LOG)
+log_filter = "info,asxs_proxy=debug"

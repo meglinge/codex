@@ -1,0 +1,203 @@
+# CI for the asxs-proxy crate (codex-rs/asxs-proxy).
+#
+# Builds release binaries for Linux (x86_64 glibc) and Windows (x86_64 MSVC),
+# uploads them as workflow artifacts, and - when the ref is a tag such as
+# `asxs-proxy-v0.1.0` - publishes a GitHub release with the archives attached.
+#
+#   git tag asxs-proxy-v0.1.0 && git push fork asxs-proxy-v0.1.0
+
+name: asxs-proxy
+
+on:
+  push:
+    branches:
+      - asxs-proxy
+    tags:
+      - "asxs-proxy-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asxs-proxy-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  build:
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            # bwrap is built (and hashed) in its own step before the main build.
+            binaries: "asxs-proxy codex-code-mode-host"
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            binaries: "asxs-proxy codex-code-mode-host codex-command-runner codex-windows-sandbox-setup"
+    defaults:
+      run:
+        working-directory: codex-rs
+        shell: bash
+
+    steps:
+      - name: Enable Git long paths (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}
+        run: git config --global core.longpaths true
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Free disk space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup || true
+          df -h /
+
+      # Dev Drive + CARGO_TARGET_DIR on Windows, unprivileged userns on Linux.
+      - uses: ./.github/actions/setup-ci
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils pkg-config libcap-dev
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      # aws-lc-sys needs NASM for its assembly on Windows MSVC.
+      - name: Install NASM (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: codex-rs
+          cache-targets: false
+          shared-key: asxs-proxy-${{ matrix.target }}
+
+      # codex-code-mode-host links V8; use the prebuilt archives from the
+      # upstream openai/codex `rusty-v8-v*` releases instead of building V8.
+      - name: Configure rusty_v8 artifact overrides and verify checksums
+        uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build bwrap and export digest (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          cargo build --target "$target" --release --bin bwrap
+          bwrap_path="$CARGO_TARGET_DIR/${target}/release/bwrap"
+          [[ -f "$bwrap_path" ]] || { echo "bwrap not found at $bwrap_path" >&2; exit 1; }
+          # Codex embeds this digest at build time and verifies the bundled
+          # bwrap next to the executable before using it.
+          strip --strip-debug --strip-unneeded "$bwrap_path"
+          digest="$(sha256sum "$bwrap_path" | awk '{print $1}')"
+          echo "CODEX_BWRAP_SHA256=${digest}" >> "$GITHUB_ENV"
+          echo "Built bwrap with sha256:${digest}"
+
+      - name: Cargo build
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          if [[ "$target" == "x86_64-pc-windows-msvc" ]]; then
+            export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
+          fi
+          build_args=()
+          for binary in ${{ matrix.binaries }}; do
+            build_args+=(--bin "$binary")
+          done
+          cargo build --target "$target" --release "${build_args[@]}"
+
+      - name: Stage archive
+        id: stage
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          release_dir="$CARGO_TARGET_DIR/${target}/release"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#asxs-proxy-v}"
+          else
+            version="$(git rev-parse --short HEAD)"
+          fi
+          name="asxs-proxy-${version}-${target}"
+          dist="${GITHUB_WORKSPACE}/dist"
+          stage="${dist}/${name}"
+          mkdir -p "$stage"
+
+          ext=""
+          [[ "$target" == *windows* ]] && ext=".exe"
+          for binary in ${{ matrix.binaries }}; do
+            cp "${release_dir}/${binary}${ext}" "$stage/"
+          done
+          if [[ "$target" == *linux* ]]; then
+            cp "${release_dir}/bwrap" "$stage/"
+            for binary in ${{ matrix.binaries }}; do
+              strip --strip-debug --strip-unneeded "$stage/${binary}"
+            done
+          fi
+          cp asxs-proxy/asxsproxy.example.toml asxs-proxy/README.md "$stage/"
+
+          cd "$dist"
+          if [[ "$target" == *windows* ]]; then
+            archive="${name}.zip"
+            7z a -tzip "$archive" "$name" >/dev/null
+          else
+            archive="${name}.tar.gz"
+            tar -czf "$archive" "$name"
+          fi
+          rm -rf "$name"
+          ls -lh "$dist"
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: asxs-proxy-${{ matrix.target }}
+          path: dist/${{ steps.stage.outputs.archive }}
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: asxs-proxy-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

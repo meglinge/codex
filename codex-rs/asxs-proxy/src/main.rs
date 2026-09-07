@@ -1,4 +1,5 @@
 //! asxs-proxy: OpenAI-compatible HTTP API served by real in-process Codex sessions.
+#![recursion_limit = "256"]
 
 mod api;
 mod bridge;

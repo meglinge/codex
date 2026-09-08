@@ -17,6 +17,8 @@ pub struct Session {
     pub cwd: PathBuf,
     pub tools_key: String,
     pub instructions: String,
+    /// Identity/account scope the session belongs to (part of the transcript key).
+    pub scope: String,
     /// sanitized (Codex-side) tool name -> client tool name.
     pub tool_names: HashMap<String, String>,
     /// Serialises HTTP requests targeting this session.

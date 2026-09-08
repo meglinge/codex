@@ -195,12 +195,50 @@ impl Default for ApiConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientCredentialsMode {
+    /// Requests may carry their own Codex credentials; otherwise static accounts are used.
+    Allowed,
+    /// Every request must carry Codex credentials ("server mode").
+    Required,
+    /// Ignore client credentials; only static accounts are used.
+    Disabled,
+}
+
+/// Server-mode authentication: clients bring their own ChatGPT OAuth tokens.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    pub client_credentials: ClientCredentialsMode,
+    /// Per-identity `CODEX_HOME`s are created under here.
+    pub identity_root: PathBuf,
+    /// Optional `config.toml` copied into a new identity's `CODEX_HOME`.
+    pub identity_config_template: Option<PathBuf>,
+    /// Stop an identity's in-process app-server after this much idle time with no sessions.
+    pub identity_idle_ttl_secs: u64,
+    pub identity_max_concurrent_turns: usize,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            client_credentials: ClientCredentialsMode::Allowed,
+            identity_root: PathBuf::from("data/identities"),
+            identity_config_template: None,
+            identity_idle_ttl_secs: 30 * 60,
+            identity_max_concurrent_turns: 4,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProxyConfig {
     pub listen: ListenConfig,
     /// API keys accepted in `Authorization: Bearer …`. Empty = no auth (local use only).
     pub api_keys: Vec<String>,
+    pub auth: AuthConfig,
     pub codex: CodexConfig,
     pub accounts: Vec<AccountConfig>,
     pub defaults: ThreadDefaults,
@@ -216,6 +254,7 @@ impl Default for ProxyConfig {
         Self {
             listen: ListenConfig::default(),
             api_keys: Vec::new(),
+            auth: AuthConfig::default(),
             codex: CodexConfig::default(),
             accounts: Vec::new(),
             defaults: ThreadDefaults::default(),
@@ -290,7 +329,7 @@ pub fn load(explicit: Option<PathBuf>) -> anyhow::Result<(ProxyConfig, PathBuf)>
             .collect();
     }
 
-    if config.accounts.is_empty() {
+    if config.accounts.is_empty() && config.auth.client_credentials != ClientCredentialsMode::Required {
         config.accounts.push(AccountConfig {
             id: "default".to_string(),
             codex_home: default_codex_home(),
@@ -303,6 +342,10 @@ pub fn load(explicit: Option<PathBuf>) -> anyhow::Result<(ProxyConfig, PathBuf)>
         account.codex_home = absolutize(&base_dir, &account.codex_home);
     }
     config.workspace_root = absolutize(&base_dir, &config.workspace_root);
+    config.auth.identity_root = absolutize(&base_dir, &config.auth.identity_root);
+    if let Some(t) = config.auth.identity_config_template.take() {
+        config.auth.identity_config_template = Some(absolutize(&base_dir, &t));
+    }
     if let Some(exe) = config.codex.codex_self_exe.take() {
         config.codex.codex_self_exe = Some(absolutize(&base_dir, &exe));
     }

@@ -20,7 +20,7 @@ use super::openai::parse_responses;
 use super::server::ApiError;
 use super::server::AppState;
 use super::server::now_secs;
-use super::server::overrides_from_headers;
+use super::server::apply_request_context;
 use crate::bridge::RunHandle;
 use crate::bridge::types::BridgeEvent;
 use crate::bridge::types::DoneReason;
@@ -32,10 +32,7 @@ pub async fn handle(
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
     let (mut req, meta) = parse_responses(&body)?;
-    let ov = overrides_from_headers(&headers);
-    req.session_id = ov.session_id;
-    req.account_id = ov.account_id;
-    req.codex_tools = ov.codex_tools;
+    apply_request_context(&mut req, &headers, &body, &state.cfg)?;
 
     let run = state.bridge.run(req).await?;
     let writer = ResponsesWriter::new(&run, &meta, state.cfg.api.expose_activity);
@@ -55,7 +52,16 @@ pub async fn handle(
         run.finish();
         let response = writer.final_response();
         let status = if writer.failed {
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            let message = response
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if super::server::is_auth_failure(message) {
+                axum::http::StatusCode::UNAUTHORIZED
+            } else {
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            }
         } else {
             axum::http::StatusCode::OK
         };

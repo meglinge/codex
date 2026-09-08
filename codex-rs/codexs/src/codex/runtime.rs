@@ -49,9 +49,12 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
-use crate::config::AccountConfig;
 use crate::config::ApprovalAnswer;
 use crate::config::ProxyConfig;
+
+struct AccountRef {
+    id: String,
+}
 
 /// Thread-scoped event delivered to whoever subscribed to that thread.
 #[derive(Debug)]
@@ -86,7 +89,10 @@ enum RuntimeCmd {
 pub struct CodexRuntime {
     pub id: String,
     pub codex_home: PathBuf,
+    /// Started for client-supplied credentials (evictable) rather than config.
+    pub is_identity: bool,
     pub max_concurrent_turns: usize,
+    last_used: Mutex<std::time::Instant>,
     pub active_turns: AtomicUsize,
     pub sessions: AtomicUsize,
     pub default_model: String,
@@ -99,11 +105,15 @@ pub struct CodexRuntime {
 
 impl CodexRuntime {
     pub async fn start(
-        account: &AccountConfig,
+        id: &str,
+        codex_home: &std::path::Path,
+        max_concurrent_turns: usize,
+        is_identity: bool,
         cfg: &ProxyConfig,
         arg0: &Arg0DispatchPaths,
     ) -> anyhow::Result<Arc<Self>> {
-        let codex_home = account.codex_home.clone();
+        let codex_home = codex_home.to_path_buf();
+        let account = AccountRef { id: id.to_string() };
         anyhow::ensure!(
             codex_home.is_dir(),
             "account {}: CODEX_HOME {} is not a directory",
@@ -224,7 +234,9 @@ impl CodexRuntime {
         let runtime = Arc::new(Self {
             id: account.id.clone(),
             codex_home,
-            max_concurrent_turns: account.max_concurrent_turns.max(1),
+            is_identity,
+            max_concurrent_turns: max_concurrent_turns.max(1),
+            last_used: Mutex::new(std::time::Instant::now()),
             active_turns: AtomicUsize::new(0),
             sessions: AtomicUsize::new(0),
             default_model,
@@ -272,6 +284,16 @@ impl CodexRuntime {
 
         info!(account = %runtime.id, home = %runtime.codex_home.display(), model = %runtime.default_model, "codex runtime started");
         Ok(runtime)
+    }
+
+    pub fn touch(&self) {
+        if let Ok(mut t) = self.last_used.lock() {
+            *t = std::time::Instant::now();
+        }
+    }
+
+    pub fn idle_for(&self) -> std::time::Duration {
+        self.last_used.lock().map(|t| t.elapsed()).unwrap_or_default()
     }
 
     fn next_request_id(&self) -> i64 {

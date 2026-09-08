@@ -45,6 +45,22 @@ pub struct ToolOutput {
     pub images: Vec<String>,
 }
 
+/// Per-request thread settings a client may pass (`asxs` body object or
+/// `x-asxs-*` headers). Applied when a new Codex thread is created.
+#[derive(Debug, Clone, Default)]
+pub struct ThreadOverrides {
+    pub sandbox: Option<String>,
+    pub approval_policy: Option<String>,
+    pub personality: Option<String>,
+    pub cwd: Option<String>,
+    pub base_instructions: Option<String>,
+    /// Appended to the developer instructions derived from the system prompt.
+    pub developer_instructions: Option<String>,
+    pub ephemeral: Option<bool>,
+    /// Dotted `config.toml` overrides (`-c key=value` semantics).
+    pub config: serde_json::Map<String, Value>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ConversationRequest {
     pub model: Option<String>,
@@ -62,6 +78,10 @@ pub struct ConversationRequest {
     pub account_id: Option<String>,
     pub codex_tools: Option<crate::config::CodexToolsMode>,
     pub output_schema: Option<Value>,
+    pub thread: ThreadOverrides,
+    /// Client-supplied Codex identity (server mode); `None` = static account pool.
+    pub identity: Option<crate::codex::identity::Identity>,
+    pub credentials_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

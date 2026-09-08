@@ -7,6 +7,7 @@ pub mod types;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
@@ -101,7 +102,8 @@ impl RunHandle {
             text: summary.text.clone(),
             tool_calls: summary.tool_calls.clone(),
         });
-        let key = transcript_key(&self.session.instructions, &self.session.tools_key, &history);
+        let scoped = format!("{}\u{5}{}", self.session.scope, self.session.instructions);
+        let key = transcript_key(&scoped, &self.session.tools_key, &history);
         self.bridge
             .index_session(&self.session, key, &self.response_id);
         self.session.touch();
@@ -227,6 +229,12 @@ impl Bridge {
             SystemPromptMode::Ignore => String::new(),
         };
         let tkey = tools_key(&req.tools);
+        // Sessions are scoped to the identity/account that owns the Codex thread.
+        let scope = match &req.identity {
+            Some(id) => format!("id:{}", id.key),
+            None => req.account_id.clone().unwrap_or_default(),
+        };
+        let scoped_instructions = format!("{scope}\u{5}{instructions}");
         let (prefix, tail): (Vec<CanonMessage>, Vec<CanonMessage>) =
             if req.previous_response_id.is_some() {
                 (Vec::new(), req.history.clone())
@@ -252,11 +260,19 @@ impl Bridge {
                     .ok_or_else(|| BridgeError::NotFound(format!("session {sid} not found")))?,
             );
         } else if !prefix.is_empty() {
-            let key = transcript_key(&instructions, &tkey, &prefix);
+            let key = transcript_key(&scoped_instructions, &tkey, &prefix);
             session = self.session_by_key(&key);
             if session.is_none() {
                 debug!(key = %&key[..12], "no live session for history prefix");
             }
+        }
+        if let Some(s) = &session
+            && let Some(id) = &req.identity
+            && s.runtime.id != format!("id:{}", id.key)
+        {
+            return Err(BridgeError::NotFound(
+                "session belongs to a different identity".to_string(),
+            ));
         }
         if let Some(s) = &session
             && (s.tools_key != tkey || s.instructions != instructions)
@@ -400,12 +416,25 @@ impl Bridge {
                 HistorySeeding::Patch => initial_history = Some(history_to_response_items(&prefix)),
             }
         }
-        let runtime = self
-            .pool
-            .acquire(req.account_id.as_deref())
-            .ok_or_else(|| BridgeError::Unavailable("no Codex account available".to_string()))?;
+        let runtime = match &req.identity {
+            Some(identity) => self
+                .pool
+                .identity_runtime(identity, req.credentials_changed)
+                .await
+                .map_err(|e| {
+                    BridgeError::Unavailable(format!(
+                        "starting Codex for identity {}: {e:#}",
+                        identity.key
+                    ))
+                })?,
+            None => self.pool.acquire(req.account_id.as_deref()).ok_or_else(|| {
+                BridgeError::Unavailable(
+                    "no Codex account available; supply codex credentials".to_string(),
+                )
+            })?,
+        };
         let session = self
-            .create_session(runtime, &req, instructions, tkey, initial_history)
+            .create_session(runtime, &req, instructions, tkey, scope, initial_history)
             .await?;
         let guard = Arc::clone(&session.lock).lock_owned().await;
         let (turn, events) = self
@@ -431,10 +460,14 @@ impl Bridge {
         req: &ConversationRequest,
         instructions: String,
         tkey: String,
+        scope: String,
         initial_history: Option<Vec<Value>>,
     ) -> Result<Arc<Session>, BridgeError> {
         let id = format!("sess_{}", uuid::Uuid::new_v4().simple());
-        let cwd = self.cfg.workspace_root.join(&id);
+        let cwd = match &req.thread.cwd {
+            Some(c) if !c.is_empty() => PathBuf::from(c),
+            _ => self.cfg.workspace_root.join(&id),
+        };
         tokio::fs::create_dir_all(&cwd)
             .await
             .map_err(|e| anyhow!("creating workspace {}: {e}", cwd.display()))?;
@@ -457,12 +490,16 @@ impl Bridge {
             config_overrides.insert("tools.update_plan.enabled".into(), json!(false));
             config_overrides.insert("mcp_servers".into(), json!({}));
         }
+        for (k, v) in &req.thread.config {
+            config_overrides.insert(k.clone(), v.clone());
+        }
 
+        let t = &req.thread;
         let mut params = json!({
             "cwd": cwd.to_string_lossy(),
-            "approvalPolicy": defaults.approval_policy,
-            "sandbox": defaults.sandbox,
-            "ephemeral": defaults.ephemeral,
+            "approvalPolicy": t.approval_policy.clone().unwrap_or_else(|| defaults.approval_policy.clone()),
+            "sandbox": t.sandbox.clone().unwrap_or_else(|| defaults.sandbox.clone()),
+            "ephemeral": t.ephemeral.unwrap_or(defaults.ephemeral),
             "experimentalRawEvents": true,
             "dynamicTools": dynamic_tools,
         });
@@ -470,11 +507,30 @@ impl Bridge {
         if let Some(m) = &model {
             obj.insert("model".into(), json!(m));
         }
-        if !instructions.is_empty() {
-            obj.insert("developerInstructions".into(), json!(instructions));
+        let mut developer = instructions.clone();
+        if let Some(extra) = &t.developer_instructions
+            && !extra.is_empty()
+        {
+            if !developer.is_empty() {
+                developer.push_str("\n\n");
+            }
+            developer.push_str(extra);
         }
-        if !defaults.personality.is_empty() {
-            obj.insert("personality".into(), json!(defaults.personality));
+        if !developer.is_empty() {
+            obj.insert("developerInstructions".into(), json!(developer));
+        }
+        if let Some(base) = &t.base_instructions
+            && !base.is_empty()
+        {
+            obj.insert("baseInstructions".into(), json!(base));
+        }
+        let personality = t
+            .personality
+            .clone()
+            .filter(|p| !p.is_empty())
+            .or_else(|| (!defaults.personality.is_empty()).then(|| defaults.personality.clone()));
+        if let Some(p) = personality {
+            obj.insert("personality".into(), json!(p));
         }
         let service_tier = req
             .service_tier
@@ -523,6 +579,7 @@ impl Bridge {
             cwd,
             tools_key: tkey,
             instructions,
+            scope,
             tool_names,
             lock: Arc::new(tokio::sync::Mutex::new(())),
             turn: Mutex::new(None),
@@ -602,6 +659,7 @@ impl Bridge {
             loop {
                 tick.tick().await;
                 bridge.reap().await;
+                bridge.pool.evict_idle_identities().await;
             }
         });
     }

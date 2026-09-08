@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 async-stream = { workspace = true }
 axum = { workspace = true, default-features = false, features = ["http1", "json", "tokio", "query"] }
 clap = { workspace = true, features = ["derive"] }

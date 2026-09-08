@@ -20,6 +20,9 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::bridge::BridgeError;
+use crate::bridge::types::ConversationRequest;
+use crate::codex::identity;
+use crate::config::ClientCredentialsMode;
 use crate::config::ProxyConfig;
 
 pub struct AppState {
@@ -63,6 +66,31 @@ impl ApiError {
     }
 }
 
+/// Codex turn failures that mean the caller's credentials are unusable.
+pub fn is_auth_failure(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("could not be refreshed")
+        || m.contains("sign in again")
+        || m.contains("unauthorized")
+        || m.contains("401")
+        || m.contains("not logged in")
+        || m.contains("authentication")
+}
+
+impl ApiError {
+    pub fn turn_failed(message: String) -> Self {
+        if is_auth_failure(&message) {
+            Self {
+                status: StatusCode::UNAUTHORIZED,
+                kind: "authentication_error",
+                message,
+            }
+        } else {
+            Self::internal(message)
+        }
+    }
+}
+
 impl From<BridgeError> for ApiError {
     fn from(e: BridgeError) -> Self {
         match e {
@@ -97,6 +125,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/models", get(models))
         .route("/models", get(models))
         .route("/v1/sessions", get(sessions))
+        .route("/v1/asxs/auth", get(asxs_auth))
         .route_layer(middleware::from_fn_with_state(Arc::clone(&state), auth));
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
@@ -109,7 +138,16 @@ async fn auth(State(state): State<Arc<AppState>>, req: Request<Body>, next: Next
         return next.run(req).await;
     }
     let presented = bearer(req.headers());
-    let ok = presented.is_some_and(|k| state.cfg.api_keys.iter().any(|a| a == k));
+    let mut ok = presented.is_some_and(|k| state.cfg.api_keys.iter().any(|a| a == k));
+    if !ok
+        && state.cfg.auth.client_credentials != ClientCredentialsMode::Disabled
+        && (presented.is_some_and(identity::looks_like_jwt)
+            || req.headers().contains_key("x-codex-access-token"))
+    {
+        // Server mode: a Codex JWT stands in for the proxy API key; Codex
+        // itself validates it against the backend.
+        ok = true;
+    }
     if !ok {
         return ApiError {
             status: StatusCode::UNAUTHORIZED,
@@ -191,6 +229,8 @@ async fn sessions(State(state): State<Arc<AppState>>) -> Json<Value> {
             .iter()
             .map(|rt| json!({
                 "id": rt.id,
+                "identity": rt.is_identity,
+                "idle_secs": rt.idle_for().as_secs(),
                 "codex_home": rt.codex_home.to_string_lossy(),
                 "default_model": rt.default_model,
                 "active_turns": rt.active_turns.load(std::sync::atomic::Ordering::Relaxed),
@@ -205,6 +245,149 @@ pub fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Apply per-request context: `asxs` body object, `x-asxs-*` headers and
+/// client-supplied Codex credentials.
+pub fn apply_request_context(
+    req: &mut ConversationRequest,
+    headers: &HeaderMap,
+    body: &Value,
+    cfg: &ProxyConfig,
+) -> Result<(), ApiError> {
+    let ov = overrides_from_headers(headers);
+    req.session_id = ov.session_id;
+    req.account_id = ov.account_id;
+    req.codex_tools = ov.codex_tools;
+    let h = |k: &str| {
+        headers
+            .get(k)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    req.thread.sandbox = h("x-asxs-sandbox");
+    req.thread.approval_policy = h("x-asxs-approval-policy");
+    req.thread.personality = h("x-asxs-personality");
+    req.thread.cwd = h("x-asxs-cwd");
+
+    if let Some(a) = body.get("asxs").and_then(Value::as_object) {
+        let s = |k: &str| {
+            a.get(k)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        if let Some(v) = s("session_id") {
+            req.session_id = Some(v);
+        }
+        if let Some(v) = s("account_id") {
+            req.account_id = Some(v);
+        }
+        if let Some(v) = s("model") {
+            req.model = Some(v);
+        }
+        if let Some(v) = s("reasoning_effort") {
+            req.reasoning_effort = Some(v);
+        }
+        if let Some(v) = s("reasoning_summary") {
+            req.reasoning_summary = Some(v);
+        }
+        if let Some(v) = s("service_tier") {
+            req.service_tier = Some(v);
+        }
+        if let Some(v) = s("codex_tools") {
+            req.codex_tools = match v.as_str() {
+                "none" => Some(crate::config::CodexToolsMode::None),
+                "full" => Some(crate::config::CodexToolsMode::Full),
+                other => {
+                    return Err(ApiError::bad_request(format!(
+                        "asxs.codex_tools must be \"none\" or \"full\", got {other:?}"
+                    )));
+                }
+            };
+        }
+        if let Some(v) = s("sandbox") {
+            req.thread.sandbox = Some(v);
+        }
+        if let Some(v) = s("approval_policy") {
+            req.thread.approval_policy = Some(v);
+        }
+        if let Some(v) = s("personality") {
+            req.thread.personality = Some(v);
+        }
+        if let Some(v) = s("cwd") {
+            req.thread.cwd = Some(v);
+        }
+        if let Some(v) = s("base_instructions") {
+            req.thread.base_instructions = Some(v);
+        }
+        if let Some(v) = s("developer_instructions") {
+            req.thread.developer_instructions = Some(v);
+        }
+        if let Some(v) = a.get("ephemeral").and_then(Value::as_bool) {
+            req.thread.ephemeral = Some(v);
+        }
+        if let Some(c) = a.get("config").and_then(Value::as_object) {
+            req.thread.config = c.clone();
+        }
+    }
+
+    match cfg.auth.client_credentials {
+        ClientCredentialsMode::Disabled => {}
+        mode => {
+            let creds = identity::extract_credentials(headers, body)
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            match creds {
+                Some(creds) => {
+                    let (id, changed) = identity::materialize(
+                        &cfg.auth.identity_root,
+                        cfg.auth.identity_config_template.as_deref(),
+                        &creds,
+                    )
+                    .map_err(|e| ApiError::internal(format!("storing credentials: {e:#}")))?;
+                    req.identity = Some(id);
+                    req.credentials_changed = changed;
+                }
+                None if mode == ClientCredentialsMode::Required => {
+                    return Err(ApiError {
+                        status: StatusCode::UNAUTHORIZED,
+                        kind: "authentication_error",
+                        message: "codex credentials required: send asxs.auth.access_token, x-codex-access-token or a JWT bearer token".to_string(),
+                    });
+                }
+                None => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Stored (possibly Codex-refreshed) tokens for the presented identity.
+async fn asxs_auth(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Value>, ApiError> {
+    if state.cfg.auth.client_credentials == ClientCredentialsMode::Disabled {
+        return Err(ApiError::bad_request("client credentials are disabled"));
+    }
+    let creds = identity::extract_credentials(&headers, &Value::Null)
+        .map_err(|e| ApiError::bad_request(e.to_string()))?
+        .ok_or_else(|| ApiError::bad_request("no codex credentials in request"))?;
+    let (id, _) = identity::materialize(
+        &state.cfg.auth.identity_root,
+        state.cfg.auth.identity_config_template.as_deref(),
+        &creds,
+    )
+    .map_err(|e| ApiError::internal(format!("{e:#}")))?;
+    let stored = identity::read_stored_auth(&id.codex_home).unwrap_or(Value::Null);
+    let runtime = state.bridge.pool().get(&format!("id:{}", id.key));
+    Ok(Json(json!({
+        "identity": id.key,
+        "account_id": id.account_id,
+        "codex_home": id.codex_home.to_string_lossy(),
+        "runtime_running": runtime.is_some(),
+        "tokens": stored,
+    })))
 }
 
 /// Per-request overrides carried in headers.

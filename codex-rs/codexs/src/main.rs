@@ -58,7 +58,7 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     info!(config = %cfg_path.display(), accounts = cfg.accounts.len(), "starting codexs");
 
     let cfg = Arc::new(cfg);
-    let pool = Arc::new(codex::pool::AccountPool::start(&cfg, &arg0_paths).await?);
+    let pool = Arc::new(codex::pool::AccountPool::start(Arc::clone(&cfg), arg0_paths).await?);
     let bridge = bridge::Bridge::new(Arc::clone(&cfg), Arc::clone(&pool));
     bridge.spawn_reaper();
 

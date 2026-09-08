@@ -139,6 +139,53 @@ Request headers: `x-asxs-session: <sess_id>` (pin a session),
 `x-asxs-account: <id>`, `x-asxs-codex-tools: none|full` (per-request override of
 `defaults.codex_tools`).
 
+### Server mode: client-supplied credentials
+
+With `[auth] client_credentials = "allowed"` (default) or `"required"`, a
+request can carry its own ChatGPT OAuth material instead of relying on the
+static `[[accounts]]`:
+
+```json
+{
+  "model": "gpt-5.5",
+  "input": "...",
+  "asxs": {
+    "auth": {
+      "access_token": "eyJ…",          // required (JWT)
+      "id_token": "eyJ…",              // optional
+      "refresh_token": "…",            // optional; enables Codex's own refresh
+      "account_id": "…"                // optional; else taken from the JWT claims
+    }
+  }
+}
+```
+
+Equivalent headers: `x-codex-access-token`, `x-codex-id-token`,
+`x-codex-refresh-token`, `x-codex-account-id`, or simply
+`Authorization: Bearer <access token JWT>` (a JWT bearer is accepted in place of
+the proxy API key). Each account gets `identity_root/<account id>/auth.json` in
+Codex's own format and a dedicated in-process Codex, started on first use and
+stopped after `identity_idle_ttl_secs` of inactivity. Sessions are scoped to
+the identity; presenting a newer access token for the same account rewrites
+`auth.json` and restarts that identity's Codex. `GET /v1/asxs/auth` (with the
+same credentials) returns the stored, possibly Codex-refreshed, tokens.
+
+### Per-request thread parameters
+
+Anything Codex needs for the thread can be passed in an `asxs` object in the
+body (or `x-asxs-*` headers for the scalar ones). They apply when a new Codex
+thread is created for the conversation:
+
+| field | effect |
+| --- | --- |
+| `session_id`, `account_id` | pin an existing session / static account |
+| `model`, `reasoning_effort`, `reasoning_summary`, `service_tier` | same as the standard OpenAI fields |
+| `codex_tools` | `"full"` or `"none"` |
+| `sandbox`, `approval_policy`, `personality`, `cwd`, `ephemeral` | `thread/start` settings |
+| `developer_instructions` | appended to the system prompt's developer block |
+| `base_instructions` | replaces Codex's base system prompt (deviates from stock Codex) |
+| `config` | dotted `config.toml` overrides for the thread, e.g. `{"model_reasoning_effort": "high", "web_search": "disabled"}` |
+
 ### Conversation state
 
 * Stateful: pass `previous_response_id` (Responses API) — the proxy continues

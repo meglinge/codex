@@ -19,7 +19,7 @@ use super::openai::parse_chat;
 use super::server::ApiError;
 use super::server::AppState;
 use super::server::now_secs;
-use super::server::overrides_from_headers;
+use super::server::apply_request_context;
 use crate::bridge::RunHandle;
 use crate::bridge::types::BridgeEvent;
 use crate::bridge::types::DoneReason;
@@ -32,10 +32,7 @@ pub async fn handle(
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
     let (mut req, meta) = parse_chat(&body)?;
-    let ov = overrides_from_headers(&headers);
-    req.session_id = ov.session_id;
-    req.account_id = ov.account_id;
-    req.codex_tools = ov.codex_tools;
+    apply_request_context(&mut req, &headers, &body, &state.cfg)?;
 
     let run = state.bridge.run(req).await?;
     let writer = ChatWriter::new(&run, &meta, &state.cfg.api);
@@ -53,7 +50,7 @@ pub async fn handle(
         }
         run.finish();
         if let Some(err) = writer.error.clone() {
-            return Err(ApiError::internal(err));
+            return Err(ApiError::turn_failed(err));
         }
         Ok(Json(writer.final_completion()).into_response())
     }

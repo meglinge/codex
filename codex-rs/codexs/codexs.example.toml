@@ -9,10 +9,21 @@ port = 8790
 # Empty list = no authentication (local use only).
 api_keys = []
 
-# One entry per Codex login. Each `codex_home` must contain the `auth.json`
-# produced by `codex login` (and may carry its own `config.toml`). One
-# in-process app-server runs per account; a session is pinned to the account
-# that created it.
+# Server mode: clients may bring their own ChatGPT OAuth tokens per request
+# (`asxs.auth` in the JSON body, `x-codex-*` headers, or a JWT bearer token).
+# Each distinct account gets a private CODEX_HOME under `identity_root` and its
+# own in-process Codex; Codex handles the tokens exactly like a `codex login`.
+[auth]
+client_credentials = "allowed"     # allowed | required | disabled
+identity_root = "data/identities"
+# identity_config_template = "identity-config.toml"   # copied into new identity homes
+identity_idle_ttl_secs = 1800
+identity_max_concurrent_turns = 4
+
+# One entry per Codex login (optional when client_credentials = "required").
+# Each `codex_home` must contain the `auth.json` produced by `codex login`
+# (and may carry its own `config.toml`). One in-process app-server runs per
+# account; a session is pinned to the account that created it.
 [[accounts]]
 id = "default"
 codex_home = "~/.codex"

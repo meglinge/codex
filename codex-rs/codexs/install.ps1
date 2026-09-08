@@ -86,8 +86,12 @@ try {
     Write-Step "Installed: $installed"
     Write-Host ''
     Write-Host 'Next steps:'
-    Write-Host "  1. Edit $config (accounts -> CODEX_HOME with auth.json from 'codex login', api_keys)."
-    Write-Host "  2. Run:  codexs            # config lookup: `$env:CODEXS_CONFIG, .\codexs.toml, $config"
+    Write-Host '  One account per instance (credentials + proxy at startup, downstream needs none):'
+    Write-Host '      codexs server --port 8790 --proxy socks5h://127.0.0.1:1080 --codex-home $HOME\.codex'
+    Write-Host '      codexs server --help      # --access-token / --auth-file / --api-key ...'
+    Write-Host '  Or the account pool from a config file:'
+    Write-Host "      edit $config, then run:  codexs"
+    Write-Host "      (config lookup: `$env:CODEXS_CONFIG, .\codexs.toml, $config)"
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

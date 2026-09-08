@@ -18,7 +18,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 async-stream = { workspace = true }
 axum = { workspace = true, default-features = false, features = ["http1", "json", "tokio", "query"] }
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "env"] }
 codex-app-server-client = { workspace = true }
 codex-app-server-protocol = { workspace = true }
 codex-arg0 = { workspace = true }

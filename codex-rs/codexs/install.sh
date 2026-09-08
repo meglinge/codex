@@ -86,6 +86,10 @@ esac
 cat <<EOF
 
 Next steps:
-  1. Edit ${INSTALL_DIR}/codexs.toml (accounts -> CODEX_HOME with auth.json from \`codex login\`, api_keys).
-  2. Run:  codexs            # config lookup: \$CODEXS_CONFIG, ./codexs.toml, ${INSTALL_DIR}/codexs.toml
+  One account per instance (credentials + proxy at startup, downstream needs none):
+      codexs server --port 8790 --proxy socks5h://127.0.0.1:1080 --codex-home ~/.codex
+      codexs server --help      # --access-token / --auth-file / --api-key ...
+  Or the account pool from a config file:
+      edit ${INSTALL_DIR}/codexs.toml, then run:  codexs
+      (config lookup: \$CODEXS_CONFIG, ./codexs.toml, ${INSTALL_DIR}/codexs.toml)
 EOF

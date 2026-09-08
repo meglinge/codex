@@ -67,6 +67,11 @@ pub struct CodexConfig {
     pub approvals: ApprovalAnswer,
     /// Session source recorded in thread metadata (`cli`, `vscode`, `exec`).
     pub session_source: String,
+    /// Outbound proxy for the embedded Codex's upstream traffic
+    /// (`http://`, `socks5://`, `socks5h://`). Applied process-wide via
+    /// `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`, so it also reaches helper
+    /// processes Codex spawns. `codexs server --proxy` overrides it.
+    pub proxy: Option<String>,
 }
 
 impl Default for CodexConfig {
@@ -77,6 +82,7 @@ impl Default for CodexConfig {
             codex_self_exe: None,
             approvals: ApprovalAnswer::Accept,
             session_source: "cli".to_string(),
+            proxy: None,
         }
     }
 }

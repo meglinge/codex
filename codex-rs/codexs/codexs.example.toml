@@ -40,6 +40,9 @@ client_name = "codex-tui"
 approvals = "accept"
 # Session source recorded in thread metadata: "cli" | "vscode" | "exec".
 session_source = "cli"
+# Outbound proxy for upstream (chatgpt.com) traffic: http:// | socks5:// | socks5h://.
+# Process-wide (HTTPS_PROXY/HTTP_PROXY/ALL_PROXY); `codexs server --proxy` overrides.
+# proxy = "socks5h://127.0.0.1:1080"
 
 [defaults]
 # Empty = the account's config.toml `model`.

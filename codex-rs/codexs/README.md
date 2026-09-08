@@ -112,6 +112,39 @@ tools) fails with "failed to spawn code-mode host".
 
 ## Run
 
+### Server mode (one account per instance)
+
+`codexs server` serves exactly one Codex account whose credentials and
+outbound proxy are given at startup. Downstream clients send no Codex
+credentials (an optional `--api-key` protects the endpoint). Run one instance
+per account, each on its own port and proxy:
+
+```
+# existing login (CODEX_HOME with auth.json from `codex login`)
+codexs server --port 8790 --proxy socks5h://127.0.0.1:1080 --codex-home ~/.codex
+
+# raw OAuth tokens (prefer the env vars so tokens stay out of `ps`)
+CODEXS_ACCESS_TOKEN=eyJ... CODEXS_REFRESH_TOKEN=... \
+codexs server --port 8791 --proxy http://user:pass@10.0.0.2:3128 --api-key k1
+
+# an auth.json exported from another machine
+codexs server --port 8792 --auth-file ./acct-b/auth.json
+```
+
+| option | env | meaning |
+| --- | --- | --- |
+| `--proxy URL` | `CODEXS_PROXY` | outbound proxy for upstream traffic (`http://`, `socks5://`, `socks5h://`); applied process-wide via `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`, so Codex's helper processes inherit it |
+| `--codex-home DIR` | `CODEXS_CODEX_HOME` | use an existing `CODEX_HOME` |
+| `--access-token JWT` (+ `--refresh-token`, `--id-token`, `--account-id`) | `CODEXS_ACCESS_TOKEN` ... | import tokens into a private `CODEX_HOME` under `--identity-root` (default `~/.codexs/identities`) |
+| `--auth-file FILE` | `CODEXS_AUTH_FILE` | import an `auth.json` the same way |
+| `--api-key KEY` | | downstream must send `Authorization: Bearer KEY` (repeatable; default open) |
+| `--max-concurrent-turns N` | | per-account turn limit |
+
+`--config` still applies for everything else (thread defaults, session
+settings). The file's `codex.proxy` is the fallback when `--proxy` is absent.
+
+### Config-file mode (account pool)
+
 ```
 cp codexs.example.toml codexs.toml   # edit accounts / keys
 ..\target\debug\codexs.exe --config codexs.toml

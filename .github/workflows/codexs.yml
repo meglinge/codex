@@ -1,26 +1,34 @@
-# CI for the asxs-proxy crate (codex-rs/asxs-proxy).
+# CI for codexs (codex-rs/codexs): an OpenAI-compatible HTTP API served by
+# in-process Codex sessions.
 #
 # Builds release binaries for Linux (x86_64 glibc) and Windows (x86_64 MSVC),
 # uploads them as workflow artifacts, and - when the ref is a tag such as
-# `asxs-proxy-v0.1.0` - publishes a GitHub release with the archives attached.
+# `codexs-v0.153.4` - publishes a GitHub release with the archives and the
+# install scripts attached.
 #
-#   git tag asxs-proxy-v0.1.0 && git push fork asxs-proxy-v0.1.0
+# Versioning follows the official Codex CLI: the tag's version must be an
+# official openai/codex release version. It is stamped into the workspace
+# `version` before building, so `codexs --version`, `clientInfo.version` and
+# the `codex_cli_rs/<version>` User-Agent all match the official CLI. Branch
+# builds use the latest official release version.
+#
+#   git tag codexs-v0.153.4 && git push fork codexs-v0.153.4
 
-name: asxs-proxy
+name: codexs
 
 on:
   push:
     branches:
-      - asxs-proxy
+      - codexs
     tags:
-      - "asxs-proxy-v*"
+      - "codexs-v*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: asxs-proxy-${{ github.ref }}
+  group: codexs-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
@@ -40,11 +48,11 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             # bwrap is built (and hashed) in its own step before the main build.
-            binaries: "asxs-proxy codex-code-mode-host"
+            binaries: "codexs codex-code-mode-host"
           # windows-2025: setup-ci provisions a Dev Drive, which windows-2022 lacks.
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
-            binaries: "asxs-proxy codex-code-mode-host codex-command-runner codex-windows-sandbox-setup"
+            binaries: "codexs codex-code-mode-host codex-command-runner codex-windows-sandbox-setup"
     defaults:
       run:
         working-directory: codex-rs
@@ -59,6 +67,30 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+
+      - name: Resolve official Codex version and stamp the workspace
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#codexs-v}"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+              || { echo "tag must look like codexs-vX.Y.Z (an official openai/codex version)" >&2; exit 1; }
+          else
+            version="$(gh release list -R openai/codex --exclude-pre-releases --limit 30 --json tagName \
+              --jq '[.[] | select(.tagName | startswith("rust-v"))][0].tagName')"
+            version="${version#rust-v}"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+              || { echo "could not resolve the latest openai/codex release (got '$version')" >&2; exit 1; }
+          fi
+          # Same stamping the official release pipeline does: every workspace
+          # crate (and therefore the User-Agent / clientInfo) reports it.
+          sed -i.bak "s/^version = \"0.0.0\"\$/version = \"${version}\"/" Cargo.toml && rm -f Cargo.toml.bak
+          grep -q "^version = \"${version}\"\$" Cargo.toml || { echo "failed to stamp version" >&2; exit 1; }
+          echo "codexs version: ${version} (codex commit $(git rev-parse --short HEAD))"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -91,7 +123,7 @@ jobs:
         with:
           workspaces: codex-rs
           cache-targets: false
-          shared-key: asxs-proxy-${{ matrix.target }}
+          shared-key: codexs-${{ matrix.target }}
 
       # setup-rusty-v8 runs a Python script that needs tomllib (3.11+);
       # ubuntu-22.04 ships 3.10.
@@ -142,13 +174,9 @@ jobs:
           set -euo pipefail
           target="${{ matrix.target }}"
           release_dir="$CARGO_TARGET_DIR/${target}/release"
+          version="${{ steps.ver.outputs.version }}"
 
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            version="${GITHUB_REF_NAME#asxs-proxy-v}"
-          else
-            version="$(git rev-parse --short HEAD)"
-          fi
-          name="asxs-proxy-${version}-${target}"
+          name="codexs-${version}-${target}"
           dist="${GITHUB_WORKSPACE}/dist"
           stage="${dist}/${name}"
           mkdir -p "$stage"
@@ -164,7 +192,9 @@ jobs:
               strip --strip-debug --strip-unneeded "$stage/${binary}"
             done
           fi
-          cp asxs-proxy/asxsproxy.example.toml asxs-proxy/README.md "$stage/"
+          cp codexs/codexs.example.toml codexs/README.md "$stage/"
+
+          "$stage/codexs${ext}" --version
 
           cd "$dist"
           if [[ "$target" == *windows* ]]; then
@@ -181,7 +211,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: asxs-proxy-${{ matrix.target }}
+          name: codexs-${{ matrix.target }}
           path: dist/${{ steps.stage.outputs.archive }}
           if-no-files-found: error
 
@@ -193,20 +223,45 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v6
         with:
-          pattern: asxs-proxy-*
+          pattern: codexs-*
           path: dist
           merge-multiple: true
 
-      - name: Checksums
+      - name: Add install scripts and checksums
+        id: notes
         run: |
           set -euo pipefail
+          cp codex-rs/codexs/install.sh codex-rs/codexs/install.ps1 dist/
           cd dist
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+          version="${GITHUB_REF_NAME#codexs-v}"
+          {
+            echo "codexs ${version} - OpenAI-compatible API served by in-process Codex."
+            echo
+            echo "Built from openai/codex \`$(git rev-parse --short HEAD)\` (branch \`codexs\`)."
+            echo "Reports Codex version \`${version}\` (\`codexs --version\`, \`clientInfo.version\`, \`codex_cli_rs/${version}\` User-Agent)."
+            echo
+            echo "Install:"
+            echo
+            echo '```'
+            echo "# Linux"
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/codexs/codex-rs/codexs/install.sh | CODEXS_VERSION=${version} bash"
+            echo
+            echo "# Windows (PowerShell)"
+            echo "\$env:CODEXS_VERSION='${version}'; irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/codexs/codex-rs/codexs/install.ps1 | iex"
+            echo '```'
+          } > ../release-notes.md
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - uses: softprops/action-gh-release@v2
         with:
+          name: codexs v${{ steps.notes.outputs.version }}
+          body_path: release-notes.md
           files: dist/*
-          generate_release_notes: true

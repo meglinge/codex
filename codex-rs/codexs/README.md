@@ -1,4 +1,4 @@
-# asxs-proxy
+# codexs
 
 OpenAI-compatible HTTP API (**Responses API** + **Chat Completions**) whose backend
 is the real Codex agent, running **in-process** through the same embedding path
@@ -16,7 +16,7 @@ workspace and links `codex-app-server-client` directly, so Codex can be patched
 freely.
 
 ```
-client (OpenAI SDK / pi / any HTTP)  ──►  asxs-proxy  ──►  in-process codex app-server  ──►  chatgpt.com/backend-api/codex
+client (OpenAI SDK / pi / any HTTP)  ──►  codexs  ──►  in-process codex app-server  ──►  chatgpt.com/backend-api/codex
         tools + messages                  session/turn         thread/start (dynamicTools)
         ◄── SSE / JSON                    state machine        item/tool/call  ◄──►  client tool result
 ```
@@ -34,38 +34,66 @@ client (OpenAI SDK / pi / any HTTP)  ──►  asxs-proxy  ──►  in-proces
 | `src/api/responses.rs` | Responses API SSE + JSON (`response.output_item.*`, `response.output_text.delta`, `response.reasoning_summary_*`, `response.function_call_arguments.*`) |
 | `src/api/chat.rs` | Chat Completions chunks (`content`, `reasoning_content`, `tool_calls`, usage) |
 
+## Install
+
+Prebuilt binaries for Linux (x86_64, glibc) and Windows (x86_64) are published on
+the [releases page](https://github.com/meglinge/codex/releases). One-liners:
+
+```
+# Linux
+curl -fsSL https://raw.githubusercontent.com/meglinge/codex/codexs/codex-rs/codexs/install.sh | bash
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/meglinge/codex/codexs/codex-rs/codexs/install.ps1 | iex
+```
+
+Both install into `~/.codexs/bin` (the helper binaries stay next to `codexs`),
+put `codexs` on `PATH` (`~/.local/bin/codexs` symlink on Linux, user `PATH`
+entry on Windows) and create `~/.codexs/codexs.toml` from the example on first
+install. Overrides: `CODEXS_VERSION=0.153.4` (default: latest release),
+`CODEXS_INSTALL_DIR`, `CODEXS_REPO`.
+
+Then edit `~/.codexs/codexs.toml` and run `codexs`. The config file is looked up
+as `$CODEXS_CONFIG`, then `./codexs.toml`, then `~/.codexs/codexs.toml`.
+
 ## Build
 
-The crate lives at `codex-rs/asxs-proxy` inside the Codex workspace (member
-`asxs-proxy`, `workspace = ".."`), so it reuses the Codex build cache and pinned
+The crate lives at `codex-rs/codexs` inside the Codex workspace (member
+`codexs`, `workspace = ".."`), so it reuses the Codex build cache and pinned
 toolchain (`1.95.0`). Run cargo from the workspace path:
 
 ```
 cd D:\MegAiTools\codex\codex-rs
-cargo build -p asxs-proxy            # -> target/debug/asxs-proxy.exe
-cargo build -p asxs-proxy --release
+cargo build -p codexs            # -> target/debug/codexs.exe
+cargo build -p codexs --release
 ```
 
 (On the dev machine the sources live in `D:\MegAiTools\ASXSProxy` and
-`codex-rs\asxs-proxy` is a junction to it; cargo must be run through the
+`codex-rs\codexs` is a junction to it; cargo must be run through the
 workspace path so it can find the root manifest.)
 
 ### CI
 
-`.github/workflows/asxs-proxy.yml` builds release binaries for
+`.github/workflows/codexs.yml` builds release binaries for
 `x86_64-unknown-linux-gnu` and `x86_64-pc-windows-msvc` on every push to the
-`asxs-proxy` branch (workflow artifacts) and publishes a GitHub release for
-tags named `asxs-proxy-v*`:
+`codexs` branch (workflow artifacts) and publishes a GitHub release for
+tags named `codexs-v<version>`:
 
 ```
-git tag asxs-proxy-v0.1.0
-git push fork asxs-proxy-v0.1.0
+git tag codexs-v0.153.4
+git push fork codexs-v0.153.4
 ```
 
-Each archive contains `asxs-proxy`, `codex-code-mode-host`, the platform
+`<version>` must be an official openai/codex release version. CI stamps it into
+the workspace `version` before building, so `codexs --version`,
+`clientInfo.version` and the `codex_cli_rs/<version>` User-Agent all report the
+same version as the official CLI (branch builds use the latest official
+release). The install scripts are attached to every release.
+
+Each archive contains `codexs`, `codex-code-mode-host`, the platform
 sandbox helpers (`bwrap` on Linux; `codex-command-runner` +
-`codex-windows-sandbox-setup` on Windows), `asxsproxy.example.toml` and this
-README. Keep the helpers next to the `asxs-proxy` binary.
+`codex-windows-sandbox-setup` on Windows), `codexs.example.toml` and this
+README. Keep the helpers next to the `codexs` binary.
 
 ### Helper binaries
 
@@ -85,8 +113,8 @@ tools) fails with "failed to spawn code-mode host".
 ## Run
 
 ```
-cp asxsproxy.example.toml asxsproxy.toml   # edit accounts / keys
-..\target\debug\asxs-proxy.exe --config asxsproxy.toml
+cp codexs.example.toml codexs.toml   # edit accounts / keys
+..\target\debug\codexs.exe --config codexs.toml
 ```
 
 Each `[[accounts]]` entry points at a `CODEX_HOME` with an `auth.json` from

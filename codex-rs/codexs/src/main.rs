@@ -1,4 +1,4 @@
-//! asxs-proxy: OpenAI-compatible HTTP API served by real in-process Codex sessions.
+//! codexs: OpenAI-compatible HTTP API served by real in-process Codex sessions.
 #![recursion_limit = "256"]
 
 mod api;
@@ -16,9 +16,9 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "asxs-proxy", version, about)]
+#[command(name = "codexs", version, about)]
 struct Cli {
-    /// Path to asxsproxy.toml (default: ./asxsproxy.toml or $ASXSPROXY_CONFIG).
+    /// Path to codexs.toml (default: $CODEXS_CONFIG, ./codexs.toml, then ~/.codexs/codexs.toml).
     #[arg(short, long)]
     config: Option<PathBuf>,
     #[arg(long)]
@@ -55,7 +55,7 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         println!("{}", toml::to_string_pretty(&cfg)?);
         return Ok(());
     }
-    info!(config = %cfg_path.display(), accounts = cfg.accounts.len(), "starting asxs-proxy");
+    info!(config = %cfg_path.display(), accounts = cfg.accounts.len(), "starting codexs");
 
     let cfg = Arc::new(cfg);
     let pool = Arc::new(codex::pool::AccountPool::start(&cfg, &arg0_paths).await?);

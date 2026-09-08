@@ -1,5 +1,5 @@
-# asxs-proxy configuration. Copy to `asxsproxy.toml` next to the binary (or
-# point at it with `--config` / `ASXSPROXY_CONFIG`). Every key is optional.
+# codexs configuration. Copy to `codexs.toml` next to the binary (or
+# point at it with `--config` / `CODEXS_CONFIG`). Every key is optional.
 
 [listen]
 host = "127.0.0.1"
@@ -74,4 +74,4 @@ chat_reasoning_content = true
 chat_activity_in_reasoning = true
 
 # tracing filter (overridden by RUST_LOG)
-log_filter = "info,asxs_proxy=debug"
+log_filter = "info,codexs=debug"

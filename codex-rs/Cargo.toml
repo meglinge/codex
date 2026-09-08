@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "asxs-proxy",
+    "codexs",
     "aws-auth",
     "analytics",
     "agent-graph-store",

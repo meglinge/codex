@@ -1,5 +1,5 @@
 [package]
-name = "asxs-proxy"
+name = "codexs"
 workspace = ".."
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 description = "OpenAI-compatible HTTP API (Responses + Chat Completions) served by real in-process Codex sessions, with client tools bridged as Codex dynamic tools."
 
 [[bin]]
-name = "asxs-proxy"
+name = "codexs"
 path = "src/main.rs"
 
 [lints]

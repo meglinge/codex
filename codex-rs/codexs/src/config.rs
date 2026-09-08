@@ -1,4 +1,4 @@
-//! Proxy configuration (`asxsproxy.toml`).
+//! Proxy configuration (`codexs.toml`).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -222,7 +222,7 @@ impl Default for ProxyConfig {
             workspace_root: PathBuf::from("data/workspaces"),
             sessions: SessionsConfig::default(),
             api: ApiConfig::default(),
-            log_filter: "info,asxs_proxy=debug".to_string(),
+            log_filter: "info,codexs=debug".to_string(),
         }
     }
 }
@@ -242,15 +242,19 @@ pub fn load(explicit: Option<PathBuf>) -> anyhow::Result<(ProxyConfig, PathBuf)>
     let path = match explicit {
         Some(p) => p,
         None => {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from);
             let candidates = [
-                std::env::var_os("ASXSPROXY_CONFIG").map(PathBuf::from),
-                Some(PathBuf::from("asxsproxy.toml")),
+                std::env::var_os("CODEXS_CONFIG").map(PathBuf::from),
+                Some(PathBuf::from("codexs.toml")),
+                home.map(|h| h.join(".codexs").join("codexs.toml")),
             ];
             candidates
                 .into_iter()
                 .flatten()
                 .find(|p| p.exists())
-                .unwrap_or_else(|| PathBuf::from("asxsproxy.toml"))
+                .unwrap_or_else(|| PathBuf::from("codexs.toml"))
         }
     };
     let path = std::path::absolute(&path).unwrap_or(path);
@@ -267,17 +271,17 @@ pub fn load(explicit: Option<PathBuf>) -> anyhow::Result<(ProxyConfig, PathBuf)>
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    if let Ok(v) = std::env::var("ASXSPROXY_PORT")
+    if let Ok(v) = std::env::var("CODEXS_PORT")
         && let Ok(port) = v.parse::<u16>()
     {
         config.listen.port = port;
     }
-    if let Ok(v) = std::env::var("ASXSPROXY_HOST")
+    if let Ok(v) = std::env::var("CODEXS_HOST")
         && !v.is_empty()
     {
         config.listen.host = v;
     }
-    if let Ok(v) = std::env::var("ASXSPROXY_API_KEYS") {
+    if let Ok(v) = std::env::var("CODEXS_API_KEYS") {
         config.api_keys = v
             .split(',')
             .map(str::trim)

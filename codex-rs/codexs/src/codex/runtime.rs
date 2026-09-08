@@ -396,7 +396,7 @@ impl CodexRuntime {
         let outcome = match result {
             Some(result) => self.resolve(id, result).await,
             None => {
-                self.reject(id, format!("asxs-proxy: {method} is not supported for proxy threads"))
+                self.reject(id, format!("codexs: {method} is not supported for proxy threads"))
                     .await
             }
         };
@@ -494,7 +494,7 @@ impl CodexRuntime {
                                 id,
                                 JSONRPCErrorError {
                                     code: -32000,
-                                    message: format!("asxs-proxy: {method} is not supported"),
+                                    message: format!("codexs: {method} is not supported"),
                                     data: None,
                                 },
                             )

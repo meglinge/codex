@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test against a running asxs-proxy (default http://127.0.0.1:8790).
+# Smoke test against a running codexs (default http://127.0.0.1:8790).
 # Usage: tests/smoke.sh [base_url] [api_key]
 set -u
 BASE="${1:-http://127.0.0.1:8790}"

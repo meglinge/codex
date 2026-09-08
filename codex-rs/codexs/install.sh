@@ -21,7 +21,7 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 case "$(uname -s)" in
   Linux) ;;
-  *) die "codexs prebuilt binaries are only published for Linux and Windows; use install.ps1 on Windows" ;;
+  *) die "codexs prebuilt binaries are only published for Linux x86_64" ;;
 esac
 case "$(uname -m)" in
   x86_64|amd64) ;;

@@ -1,10 +1,9 @@
 # CI for codexs (codex-rs/codexs): an OpenAI-compatible HTTP API served by
 # in-process Codex sessions.
 #
-# Builds release binaries for Linux (x86_64 glibc) and Windows (x86_64 MSVC),
-# uploads them as workflow artifacts, and - when the ref is a tag such as
-# `codexs-v0.153.4` - publishes a GitHub release with the archives and the
-# install scripts attached.
+# Builds the Linux (x86_64 glibc) release binaries, uploads them as a workflow
+# artifact, and - when the ref is a tag such as `codexs-v0.153.4` - publishes a
+# GitHub release with the archive and the install script attached.
 #
 # Versioning follows the official Codex CLI: the tag's version must be an
 # official openai/codex release version. It is stamped into the workspace
@@ -35,35 +34,21 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  TARGET: x86_64-unknown-linux-gnu
+  # bwrap is built (and hashed) in its own step before the main build.
+  BINARIES: "codexs codex-code-mode-host"
 
 jobs:
   build:
-    name: Build - ${{ matrix.target }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            # bwrap is built (and hashed) in its own step before the main build.
-            binaries: "codexs codex-code-mode-host"
-          # windows-2025: setup-ci provisions a Dev Drive, which windows-2022 lacks.
-          - runner: windows-2025
-            target: x86_64-pc-windows-msvc
-            binaries: "codexs codex-code-mode-host codex-command-runner codex-windows-sandbox-setup"
+    name: Build - x86_64-unknown-linux-gnu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: codex-rs
         shell: bash
 
     steps:
-      - name: Enable Git long paths (Windows)
-        if: runner.os == 'Windows'
-        working-directory: ${{ github.workspace }}
-        run: git config --global core.longpaths true
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
@@ -92,18 +77,16 @@ jobs:
           echo "codexs version: ${version} (codex commit $(git rev-parse --short HEAD))"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-      - name: Free disk space (Linux)
-        if: runner.os == 'Linux'
+      - name: Free disk space
         run: |
           set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup || true
           df -h /
 
-      # Dev Drive + CARGO_TARGET_DIR on Windows, unprivileged userns on Linux.
+      # CARGO_TARGET_DIR, unprivileged userns, dotslash/just.
       - uses: ./.github/actions/setup-ci
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
+      - name: Install build dependencies
         run: |
           set -euo pipefail
           sudo apt-get update -y
@@ -111,24 +94,18 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
-          targets: ${{ matrix.target }}
-
-      # aws-lc-sys needs NASM for its assembly on Windows MSVC.
-      - name: Install NASM (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/setup-nasm@v1
+          targets: ${{ env.TARGET }}
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: codex-rs
           cache-targets: false
-          shared-key: codexs-${{ matrix.target }}
+          shared-key: codexs-${{ env.TARGET }}
 
       # setup-rusty-v8 runs a Python script that needs tomllib (3.11+);
       # ubuntu-22.04 ships 3.10.
-      - name: Install Python 3.12 (Linux)
-        if: runner.os == 'Linux'
+      - name: Install Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -138,15 +115,13 @@ jobs:
       - name: Configure rusty_v8 artifact overrides and verify checksums
         uses: ./.github/actions/setup-rusty-v8
         with:
-          target: ${{ matrix.target }}
+          target: ${{ env.TARGET }}
 
-      - name: Build bwrap and export digest (Linux)
-        if: runner.os == 'Linux'
+      - name: Build bwrap and export digest
         run: |
           set -euo pipefail
-          target="${{ matrix.target }}"
-          cargo build --target "$target" --release --bin bwrap
-          bwrap_path="$CARGO_TARGET_DIR/${target}/release/bwrap"
+          cargo build --target "$TARGET" --release --bin bwrap
+          bwrap_path="$CARGO_TARGET_DIR/${TARGET}/release/bwrap"
           [[ -f "$bwrap_path" ]] || { echo "bwrap not found at $bwrap_path" >&2; exit 1; }
           # Codex embeds this digest at build time and verifies the bundled
           # bwrap next to the executable before using it.
@@ -158,52 +133,36 @@ jobs:
       - name: Cargo build
         run: |
           set -euo pipefail
-          target="${{ matrix.target }}"
-          if [[ "$target" == "x86_64-pc-windows-msvc" ]]; then
-            export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
-          fi
           build_args=()
-          for binary in ${{ matrix.binaries }}; do
+          for binary in $BINARIES; do
             build_args+=(--bin "$binary")
           done
-          cargo build --target "$target" --release "${build_args[@]}"
+          cargo build --target "$TARGET" --release "${build_args[@]}"
 
       - name: Stage archive
         id: stage
         run: |
           set -euo pipefail
-          target="${{ matrix.target }}"
-          release_dir="$CARGO_TARGET_DIR/${target}/release"
+          release_dir="$CARGO_TARGET_DIR/${TARGET}/release"
           version="${{ steps.ver.outputs.version }}"
 
-          name="codexs-${version}-${target}"
+          name="codexs-${version}-${TARGET}"
           dist="${GITHUB_WORKSPACE}/dist"
           stage="${dist}/${name}"
           mkdir -p "$stage"
 
-          ext=""
-          [[ "$target" == *windows* ]] && ext=".exe"
-          for binary in ${{ matrix.binaries }}; do
-            cp "${release_dir}/${binary}${ext}" "$stage/"
+          for binary in $BINARIES; do
+            cp "${release_dir}/${binary}" "$stage/"
+            strip --strip-debug --strip-unneeded "$stage/${binary}"
           done
-          if [[ "$target" == *linux* ]]; then
-            cp "${release_dir}/bwrap" "$stage/"
-            for binary in ${{ matrix.binaries }}; do
-              strip --strip-debug --strip-unneeded "$stage/${binary}"
-            done
-          fi
+          cp "${release_dir}/bwrap" "$stage/"
           cp codexs/codexs.example.toml codexs/README.md "$stage/"
 
-          "$stage/codexs${ext}" --version
+          "$stage/codexs" --version
 
           cd "$dist"
-          if [[ "$target" == *windows* ]]; then
-            archive="${name}.zip"
-            7z a -tzip "$archive" "$name" >/dev/null
-          else
-            archive="${name}.tar.gz"
-            tar -czf "$archive" "$name"
-          fi
+          archive="${name}.tar.gz"
+          tar -czf "$archive" "$name"
           rm -rf "$name"
           ls -lh "$dist"
           echo "archive=${archive}" >> "$GITHUB_OUTPUT"
@@ -211,7 +170,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: codexs-${{ matrix.target }}
+          name: codexs-${{ env.TARGET }}
           path: dist/${{ steps.stage.outputs.archive }}
           if-no-files-found: error
 
@@ -233,17 +192,17 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Add install scripts and checksums
+      - name: Add install script and checksums
         id: notes
         run: |
           set -euo pipefail
-          cp codex-rs/codexs/install.sh codex-rs/codexs/install.ps1 dist/
+          cp codex-rs/codexs/install.sh dist/
           cd dist
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           version="${GITHUB_REF_NAME#codexs-v}"
           {
-            echo "codexs ${version} - OpenAI-compatible API served by in-process Codex."
+            echo "codexs ${version} - OpenAI-compatible API served by in-process Codex (Linux x86_64)."
             echo
             echo "Built from openai/codex \`$(git rev-parse --short HEAD)\` (branch \`codexs\`)."
             echo "Reports Codex version \`${version}\` (\`codexs --version\`, \`clientInfo.version\`, \`codex_cli_rs/${version}\` User-Agent)."
@@ -251,12 +210,10 @@ jobs:
             echo "Install:"
             echo
             echo '```'
-            echo "# Linux"
             echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/codexs/codex-rs/codexs/install.sh | CODEXS_VERSION=${version} bash"
-            echo
-            echo "# Windows (PowerShell)"
-            echo "\$env:CODEXS_VERSION='${version}'; irm https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/codexs/codex-rs/codexs/install.ps1 | iex"
             echo '```'
+            echo
+            echo "One account per instance: \`codexs server --port 8790 --proxy socks5h://127.0.0.1:1080 --codex-home ~/.codex\` (see \`codexs server --help\`)."
           } > ../release-notes.md
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 

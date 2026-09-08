@@ -36,22 +36,17 @@ client (OpenAI SDK / pi / any HTTP)  ──►  codexs  ──►  in-process co
 
 ## Install
 
-Prebuilt binaries for Linux (x86_64, glibc) and Windows (x86_64) are published on
-the [releases page](https://github.com/meglinge/codex/releases). One-liners:
+Prebuilt binaries for Linux (x86_64, glibc) are published on the
+[releases page](https://github.com/meglinge/codex/releases). One-liner:
 
 ```
-# Linux
 curl -fsSL https://raw.githubusercontent.com/meglinge/codex/codexs/codex-rs/codexs/install.sh | bash
-
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/meglinge/codex/codexs/codex-rs/codexs/install.ps1 | iex
 ```
 
-Both install into `~/.codexs/bin` (the helper binaries stay next to `codexs`),
-put `codexs` on `PATH` (`~/.local/bin/codexs` symlink on Linux, user `PATH`
-entry on Windows) and create `~/.codexs/codexs.toml` from the example on first
-install. Overrides: `CODEXS_VERSION=0.153.4` (default: latest release),
-`CODEXS_INSTALL_DIR`, `CODEXS_REPO`.
+It installs into `~/.codexs/bin` (the helper binaries stay next to `codexs`),
+symlinks `~/.local/bin/codexs` and creates `~/.codexs/codexs.toml` from the
+example on first install. Overrides: `CODEXS_VERSION=0.153.4` (default: latest
+release), `CODEXS_INSTALL_DIR`, `CODEXS_BIN_DIR`, `CODEXS_REPO`.
 
 Then edit `~/.codexs/codexs.toml` and run `codexs`. The config file is looked up
 as `$CODEXS_CONFIG`, then `./codexs.toml`, then `~/.codexs/codexs.toml`.
@@ -75,9 +70,8 @@ workspace path so it can find the root manifest.)
 ### CI
 
 `.github/workflows/codexs.yml` builds release binaries for
-`x86_64-unknown-linux-gnu` and `x86_64-pc-windows-msvc` on every push to the
-`codexs` branch (workflow artifacts) and publishes a GitHub release for
-tags named `codexs-v<version>`:
+`x86_64-unknown-linux-gnu` on every push to the `codexs` branch (workflow
+artifacts) and publishes a GitHub release for tags named `codexs-v<version>`:
 
 ```
 git tag codexs-v0.153.4
@@ -88,12 +82,11 @@ git push fork codexs-v0.153.4
 the workspace `version` before building, so `codexs --version`,
 `clientInfo.version` and the `codex_cli_rs/<version>` User-Agent all report the
 same version as the official CLI (branch builds use the latest official
-release). The install scripts are attached to every release.
+release). The install script is attached to every release.
 
-Each archive contains `codexs`, `codex-code-mode-host`, the platform
-sandbox helpers (`bwrap` on Linux; `codex-command-runner` +
-`codex-windows-sandbox-setup` on Windows), `codexs.example.toml` and this
-README. Keep the helpers next to the `codexs` binary.
+The archive contains `codexs`, `codex-code-mode-host`, the bundled `bwrap`
+sandbox helper, `codexs.example.toml` and this README. Keep the helpers next
+to the `codexs` binary.
 
 ### Helper binaries
 

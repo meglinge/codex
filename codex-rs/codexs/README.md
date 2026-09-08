@@ -63,7 +63,7 @@ cargo build -p codexs            # -> target/debug/codexs.exe
 cargo build -p codexs --release
 ```
 
-(On the dev machine the sources live in `D:\MegAiTools\ASXSProxy` and
+(On the dev machine the sources live in `D:\MegAiTools\ASXSProxy\codex-patch` and
 `codex-rs\codexs` is a junction to it; cargo must be run through the
 workspace path so it can find the root manifest.)
 

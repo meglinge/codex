@@ -12,6 +12,9 @@
 # builds use the latest official release version.
 #
 #   git tag codexs-v0.153.4 && git push fork codexs-v0.153.4
+#
+# A rebuild of the same official version gets a build suffix:
+# `codexs-v0.153.4-2` still stamps/reports 0.153.4, only the release tag differs.
 
 name: codexs
 
@@ -61,8 +64,9 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#codexs-v}"
+            version="${version%%-*}"   # drop a build suffix (codexs-v0.153.4-2 -> 0.153.4)
             [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-              || { echo "tag must look like codexs-vX.Y.Z (an official openai/codex version)" >&2; exit 1; }
+              || { echo "tag must look like codexs-vX.Y.Z[-N] (X.Y.Z an official openai/codex version)" >&2; exit 1; }
           else
             version="$(gh release list -R openai/codex --exclude-pre-releases --limit 30 --json tagName \
               --jq '[.[] | select(.tagName | startswith("rust-v"))][0].tagName')"
@@ -201,8 +205,9 @@ jobs:
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
           version="${GITHUB_REF_NAME#codexs-v}"
+          version="${version%%-*}"
           {
-            echo "codexs ${version} - OpenAI-compatible API served by in-process Codex (Linux x86_64)."
+            echo "codexs ${GITHUB_REF_NAME#codexs-v} - OpenAI-compatible API served by in-process Codex (Linux x86_64)."
             echo
             echo "Built from openai/codex \`$(git rev-parse --short HEAD)\` (branch \`codexs\`)."
             echo "Reports Codex version \`${version}\` (\`codexs --version\`, \`clientInfo.version\`, \`codex_cli_rs/${version}\` User-Agent)."
@@ -210,7 +215,7 @@ jobs:
             echo "Install:"
             echo
             echo '```'
-            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/codexs/codex-rs/codexs/install.sh | CODEXS_VERSION=${version} bash"
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/codexs/codex-rs/codexs/install.sh | CODEXS_VERSION=${GITHUB_REF_NAME#codexs-v} bash"
             echo '```'
             echo
             echo "One account per instance: \`codexs server --port 8790 --proxy socks5h://127.0.0.1:1080 --codex-home ~/.codex\` (see \`codexs server --help\`)."

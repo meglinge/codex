@@ -29,6 +29,14 @@ pub fn parse_tools(v: Option<&Value>) -> Result<Vec<ToolSpec>, ApiError> {
     };
     for t in arr {
         let ty = str_of(t, "type").unwrap_or("function");
+        if ty == "namespace" {
+            // Responses Lite groups function tools under a namespace object;
+            // flatten it so calls route by plain name.
+            if let Some(inner) = t.get("tools") {
+                out.extend(parse_tools(Some(inner))?);
+            }
+            continue;
+        }
         if ty != "function" {
             // web_search / custom / mcp …: kept verbatim so passthrough mode can
             // forward them; the other modes ignore them (see dynamic_tools_json).
@@ -214,6 +222,12 @@ pub fn parse_responses(body: &Value) -> Result<(ConversationRequest, ResponsesMe
                         };
                         push_assistant(&mut history, None, Some(call));
                     }
+                    (Some("additional_tools"), _) => {
+                        // Responses Lite (what Codex itself sends upstream): the
+                        // tools travel as a developer `additional_tools` input
+                        // item instead of the top-level `tools`.
+                        req.tools.extend(parse_tools(it.get("tools"))?);
+                    }
                     (Some("function_call_output"), _) => {
                         let (output, images) =
                             output_to_string(it.get("output").unwrap_or(&Value::Null));
@@ -379,4 +393,41 @@ pub fn parse_chat(body: &Value) -> Result<(ConversationRequest, ChatMeta), ApiEr
             include_usage,
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn responses_lite_additional_tools_are_parsed() {
+        let body = serde_json::json!({
+            "model": "gpt-6-astra",
+            "instructions": "",
+            "input": [
+                {"type": "additional_tools", "role": "developer", "tools": [
+                    {"type": "function", "name": "read_file", "description": "r",
+                     "parameters": {"type": "object", "properties": {}}, "strict": false},
+                    {"type": "namespace", "name": "functions", "description": "", "tools": [
+                        {"type": "function", "name": "ns_tool", "description": "",
+                         "parameters": {"type": "object", "properties": {}}}
+                    ]},
+                    {"type": "web_search"}
+                ]},
+                {"type": "message", "role": "developer",
+                 "content": [{"type": "input_text", "text": "You are Codex"}]},
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        });
+        let (req, _) = parse_responses(&body).expect("parse");
+        let names: Vec<&str> = req.tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["read_file", "ns_tool", ""]);
+        assert!(req.tools[0].is_function());
+        assert!(!req.tools[2].is_function());
+        assert_eq!(req.tools[0].raw["strict"], serde_json::json!(false));
+        assert_eq!(req.tools[2].raw, serde_json::json!({"type": "web_search"}));
+        assert_eq!(req.instructions.as_deref(), Some("You are Codex"));
+        assert_eq!(req.history.len(), 1);
+    }
 }

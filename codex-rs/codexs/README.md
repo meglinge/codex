@@ -151,7 +151,9 @@ Sessions are pinned to the account that created them.
 
 * `POST /v1/responses` — `input` (string or items), `instructions`, `tools`
   (function), `previous_response_id`, `stream`, `reasoning.{effort,summary}`,
-  `text.format` (json_schema → Codex `outputSchema`). Output items:
+  `text.format` (json_schema → Codex `outputSchema`). Responses Lite input is
+  understood too: a developer `additional_tools` item (what Codex itself sends
+  for gpt-6 models) is read as the tool list, namespaces flattened. Output items:
   `message`, `reasoning` (summary), `function_call`, and — when
   `api.expose_activity = true` — `codex_activity` items carrying Codex's own
   command executions / file changes / web searches.

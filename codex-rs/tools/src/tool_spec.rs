@@ -53,6 +53,10 @@ pub enum ToolSpec {
     },
     #[serde(rename = "custom")]
     Freeform(FreeformTool),
+    /// A tool object serialized exactly as given (ASXS: client tools forwarded
+    /// verbatim). It must be a complete Responses API tool, `type` included.
+    #[serde(untagged)]
+    Raw(Value),
 }
 
 impl ToolSpec {
@@ -63,6 +67,7 @@ impl ToolSpec {
             ToolSpec::ToolSearch { .. } => "tool_search",
             ToolSpec::WebSearch { .. } => "web_search",
             ToolSpec::Freeform(tool) => tool.name.as_str(),
+            ToolSpec::Raw(value) => value.get("name").and_then(Value::as_str).unwrap_or(""),
         }
     }
 }
@@ -191,3 +196,24 @@ impl From<ConfigWebSearchUserLocation> for ResponsesApiWebSearchUserLocation {
 #[cfg(test)]
 #[path = "tool_spec_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod raw_spec_tests {
+    use super::ToolSpec;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    #[test]
+    fn raw_spec_serializes_verbatim_and_exposes_name() {
+        let tool = json!({
+            "type": "function",
+            "name": "mcp__ffs__ffs_read",
+            "description": "Read a file",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string", "format": "uri"}}, "required": ["path"]},
+            "strict": true
+        });
+        let spec = ToolSpec::Raw(tool.clone());
+        assert_eq!(spec.name(), "mcp__ffs__ffs_read");
+        assert_eq!(serde_json::to_value(&spec).expect("serialize"), tool);
+    }
+}

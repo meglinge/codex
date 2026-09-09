@@ -139,7 +139,10 @@ impl TurnRun {
     }
 
     pub fn status(&self) -> TurnStatus {
-        self.state.lock().map(|s| s.status).unwrap_or(TurnStatus::Finished)
+        self.state
+            .lock()
+            .map(|s| s.status)
+            .unwrap_or(TurnStatus::Finished)
     }
 
     pub fn awaiting_since(&self) -> Option<std::time::Instant> {
@@ -379,7 +382,9 @@ impl TurnRun {
     /// Returns `true` once the turn is finished.
     async fn handle_event(self: &Arc<Self>, ev: ThreadEvent) -> bool {
         match ev {
-            ThreadEvent::Notification { method, params } => self.handle_notification(&method, params),
+            ThreadEvent::Notification { method, params } => {
+                self.handle_notification(&method, params)
+            }
             ThreadEvent::Request { id, method, params } => {
                 if method == "item/tool/call" {
                     self.handle_tool_call(id, &params);
@@ -415,7 +420,8 @@ impl TurnRun {
             let Ok(mut s) = self.state.lock() else {
                 return;
             };
-            s.pending.push((call_id.clone(), PendingCall { request_id: id }));
+            s.pending
+                .push((call_id.clone(), PendingCall { request_id: id }));
             s.segment_calls.push(ToolCallRecord {
                 call_id: call_id.clone(),
                 name: name.clone(),
@@ -476,7 +482,10 @@ impl TurnRun {
                         &mut s,
                         BridgeEvent::MessageStart {
                             item_id: id,
-                            phase: item.get("phase").and_then(Value::as_str).map(str::to_string),
+                            phase: item
+                                .get("phase")
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
                         },
                     ),
                     "reasoning" => Self::emit(&mut s, BridgeEvent::ReasoningStart { item_id: id }),
@@ -503,7 +512,10 @@ impl TurnRun {
                 );
             }
             "item/reasoning/summaryPartAdded" => {
-                let index = params.get("summaryIndex").and_then(Value::as_i64).unwrap_or(0);
+                let index = params
+                    .get("summaryIndex")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
                 Self::emit(
                     &mut s,
                     BridgeEvent::ReasoningPart {
@@ -571,7 +583,10 @@ impl TurnRun {
                             BridgeEvent::MessageEnd {
                                 item_id: id,
                                 text,
-                                phase: item.get("phase").and_then(Value::as_str).map(str::to_string),
+                                phase: item
+                                    .get("phase")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
                             },
                         );
                     }
@@ -652,7 +667,10 @@ impl TurnRun {
             }
             "turn/completed" => {
                 let turn = params.get("turn").cloned().unwrap_or(Value::Null);
-                let status = turn.get("status").and_then(Value::as_str).unwrap_or("completed");
+                let status = turn
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("completed");
                 let (reason, error) = match status {
                     "interrupted" => (DoneReason::Interrupted, None),
                     "failed" => (

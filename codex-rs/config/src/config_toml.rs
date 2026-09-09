@@ -629,6 +629,9 @@ pub struct ToolsToml {
     pub web_search: Option<WebSearchToolConfig>,
     pub experimental_request_user_input: Option<ExperimentalRequestUserInput>,
     pub update_plan: Option<UpdatePlanToolConfig>,
+    /// ASXS: offer the model only the thread's dynamic (client) tools, as plain
+    /// function tools; disables every built-in, MCP and hosted tool and code mode.
+    pub client_only: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]

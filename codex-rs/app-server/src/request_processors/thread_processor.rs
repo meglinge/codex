@@ -384,6 +384,23 @@ fn validate_dynamic_tools(tools: &[DynamicToolSpec]) -> Result<(), String> {
             DynamicToolSpec::Function(tool) => {
                 validate_dynamic_tool(tool, /*namespace*/ None, &mut seen_tools)?;
             }
+            DynamicToolSpec::Verbatim(spec) => {
+                // Forwarded untouched: only what the Responses API itself requires.
+                if !spec.tool.is_object() {
+                    return Err("verbatim dynamic tool must be a JSON object".to_string());
+                }
+                let Some(name) = spec.name() else {
+                    return Err("verbatim dynamic tool must have a string `name`".to_string());
+                };
+                validate_dynamic_tool_identifier(
+                    name,
+                    "dynamic tool name",
+                    DYNAMIC_TOOL_NAME_MAX_LEN,
+                )?;
+                if !seen_tools.insert(name) {
+                    return Err(format!("duplicate dynamic tool name: {name}"));
+                }
+            }
             DynamicToolSpec::Namespace(namespace) => {
                 let name = namespace.name.trim();
                 if name.is_empty() {
@@ -1430,7 +1447,7 @@ impl ThreadRequestProcessor {
         let dynamic_tool_count: usize = dynamic_tools
             .iter()
             .map(|tool| match tool {
-                DynamicToolSpec::Function(_) => 1,
+                DynamicToolSpec::Function(_) | DynamicToolSpec::Verbatim(_) => 1,
                 DynamicToolSpec::Namespace(namespace) => namespace.tools.len(),
             })
             .sum();
@@ -1476,8 +1493,12 @@ impl ThreadRequestProcessor {
                     _ => match session_start_source
                         .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
                     {
-                        codex_app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
-                        codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
+                        codex_app_server_protocol::ThreadStartSource::Startup => {
+                            InitialHistory::New
+                        }
+                        codex_app_server_protocol::ThreadStartSource::Clear => {
+                            InitialHistory::Cleared
+                        }
                     },
                 },
                 history_mode,

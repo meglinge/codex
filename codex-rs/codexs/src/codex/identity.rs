@@ -51,7 +51,10 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 
 /// Extract credentials from `asxs.auth` in the body, `x-codex-*` headers, or a
 /// JWT bearer token. Returns `Ok(None)` when the request carries none.
-pub fn extract_credentials(headers: &HeaderMap, body: &Value) -> anyhow::Result<Option<ClientCredentials>> {
+pub fn extract_credentials(
+    headers: &HeaderMap,
+    body: &Value,
+) -> anyhow::Result<Option<ClientCredentials>> {
     let auth = body.get("asxs").and_then(|a| a.get("auth"));
     let field = |k: &str| -> Option<String> {
         auth.and_then(|a| a.get(k))
@@ -60,10 +63,13 @@ pub fn extract_credentials(headers: &HeaderMap, body: &Value) -> anyhow::Result<
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
-    let mut access_token = field("access_token").or_else(|| header(headers, "x-codex-access-token").map(str::to_string));
+    let mut access_token = field("access_token")
+        .or_else(|| header(headers, "x-codex-access-token").map(str::to_string));
     if access_token.is_none()
         && let Some(v) = header(headers, "authorization")
-        && let Some(bearer) = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))
+        && let Some(bearer) = v
+            .strip_prefix("Bearer ")
+            .or_else(|| v.strip_prefix("bearer "))
         && looks_like_jwt(bearer.trim())
     {
         access_token = Some(bearer.trim().to_string());
@@ -71,19 +77,31 @@ pub fn extract_credentials(headers: &HeaderMap, body: &Value) -> anyhow::Result<
     let Some(access_token) = access_token else {
         return Ok(None);
     };
-    anyhow::ensure!(looks_like_jwt(&access_token), "codex access token must be a JWT");
+    anyhow::ensure!(
+        looks_like_jwt(&access_token),
+        "codex access token must be a JWT"
+    );
     Ok(Some(ClientCredentials {
         access_token,
-        id_token: field("id_token").or_else(|| header(headers, "x-codex-id-token").map(str::to_string)),
-        refresh_token: field("refresh_token").or_else(|| header(headers, "x-codex-refresh-token").map(str::to_string)),
-        account_id: field("account_id").or_else(|| header(headers, "x-codex-account-id").map(str::to_string)),
+        id_token: field("id_token")
+            .or_else(|| header(headers, "x-codex-id-token").map(str::to_string)),
+        refresh_token: field("refresh_token")
+            .or_else(|| header(headers, "x-codex-refresh-token").map(str::to_string)),
+        account_id: field("account_id")
+            .or_else(|| header(headers, "x-codex-account-id").map(str::to_string)),
     }))
 }
 
 fn sanitize_key(s: &str) -> String {
     let mut out: String = s
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.len() > 80 {
         out.truncate(80);
@@ -107,7 +125,11 @@ pub fn materialize(
         .account_id
         .clone()
         .or_else(|| claims.as_ref().and_then(|c| c.chatgpt_account_id.clone()))
-        .or_else(|| access_claims.as_ref().and_then(|c| c.chatgpt_account_id.clone()));
+        .or_else(|| {
+            access_claims
+                .as_ref()
+                .and_then(|c| c.chatgpt_account_id.clone())
+        });
     let key = match &account_id {
         Some(a) => sanitize_key(a),
         None => {
@@ -121,7 +143,8 @@ pub fn materialize(
         }
     };
     let codex_home = root.join(&key);
-    std::fs::create_dir_all(&codex_home).with_context(|| format!("creating {}", codex_home.display()))?;
+    std::fs::create_dir_all(&codex_home)
+        .with_context(|| format!("creating {}", codex_home.display()))?;
     let auth_path = codex_home.join("auth.json");
 
     let mut changed = false;
@@ -181,7 +204,8 @@ pub fn materialize(
         let tmp = codex_home.join("auth.json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(&auth)?)
             .with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, &auth_path).with_context(|| format!("renaming into {}", auth_path.display()))?;
+        std::fs::rename(&tmp, &auth_path)
+            .with_context(|| format!("renaming into {}", auth_path.display()))?;
         changed = true;
     }
     if let Some(template) = config_template {

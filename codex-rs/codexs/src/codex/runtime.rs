@@ -122,8 +122,12 @@ impl CodexRuntime {
         );
         std::fs::create_dir_all(&cfg.workspace_root)
             .with_context(|| format!("creating {}", cfg.workspace_root.display()))?;
-        let cwd = AbsolutePathBuf::from_absolute_path(&cfg.workspace_root)
-            .with_context(|| format!("workspace_root {} must be absolute", cfg.workspace_root.display()))?;
+        let cwd = AbsolutePathBuf::from_absolute_path(&cfg.workspace_root).with_context(|| {
+            format!(
+                "workspace_root {} must be absolute",
+                cfg.workspace_root.display()
+            )
+        })?;
 
         let mut arg0 = arg0.clone();
         if let Some(exe) = &cfg.codex.codex_self_exe {
@@ -151,7 +155,8 @@ impl CodexRuntime {
         .await
         .with_context(|| format!("account {}: loading config.toml", account.id))?;
         let auth_config = bootstrap_auth_config(&codex_home, &bootstrap)?;
-        let cloud_config_bundle = cloud_config_bundle_loader_for_storage(auth_config, false).await?;
+        let cloud_config_bundle =
+            cloud_config_bundle_loader_for_storage(auth_config, false).await?;
 
         let overrides = ConfigOverrides {
             model: (!cfg.defaults.model.is_empty()).then(|| cfg.defaults.model.clone()),
@@ -225,9 +230,12 @@ impl CodexRuntime {
             channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
         };
 
-        let mut client = InProcessAppServerClient::start(args)
-            .await
-            .map_err(|e| anyhow!("account {}: starting in-process app-server: {e}", account.id))?;
+        let mut client = InProcessAppServerClient::start(args).await.map_err(|e| {
+            anyhow!(
+                "account {}: starting in-process app-server: {e}",
+                account.id
+            )
+        })?;
         let handle = client.request_handle();
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<RuntimeCmd>(64);
 
@@ -293,7 +301,10 @@ impl CodexRuntime {
     }
 
     pub fn idle_for(&self) -> std::time::Duration {
-        self.last_used.lock().map(|t| t.elapsed()).unwrap_or_default()
+        self.last_used
+            .lock()
+            .map(|t| t.elapsed())
+            .unwrap_or_default()
     }
 
     fn next_request_id(&self) -> i64 {
@@ -418,8 +429,11 @@ impl CodexRuntime {
         let outcome = match result {
             Some(result) => self.resolve(id, result).await,
             None => {
-                self.reject(id, format!("codexs: {method} is not supported for proxy threads"))
-                    .await
+                self.reject(
+                    id,
+                    format!("codexs: {method} is not supported for proxy threads"),
+                )
+                .await
             }
         };
         if let Err(e) = outcome {
@@ -460,7 +474,10 @@ impl CodexRuntime {
                     }
                 }
                 match method.as_str() {
-                    "account/rateLimits/updated" | "account/updated" | "warning" | "configWarning"
+                    "account/rateLimits/updated"
+                    | "account/updated"
+                    | "warning"
+                    | "configWarning"
                     | "deprecationNotice" => {
                         debug!(account = %self.id, method, params = %params, "notification");
                     }

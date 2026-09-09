@@ -217,6 +217,7 @@ impl ServerHandler for DynamicToolMcpHandler {
         for spec in dynamic_tools::tool_specs() {
             let functions = match spec {
                 DynamicToolSpec::Function(function) => vec![function],
+                DynamicToolSpec::Verbatim(_) => Vec::new(),
                 DynamicToolSpec::Namespace(namespace) => namespace
                     .tools
                     .into_iter()

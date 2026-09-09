@@ -19,8 +19,8 @@ use super::openai::ResponsesMeta;
 use super::openai::parse_responses;
 use super::server::ApiError;
 use super::server::AppState;
-use super::server::now_secs;
 use super::server::apply_request_context;
+use super::server::now_secs;
 use crate::bridge::RunHandle;
 use crate::bridge::types::BridgeEvent;
 use crate::bridge::types::DoneReason;
@@ -243,7 +243,11 @@ impl ResponsesWriter {
                 let Some(o) = self.open.remove(&item_id) else {
                     return frames;
                 };
-                let final_text = if text.is_empty() { o.text.clone() } else { text };
+                let final_text = if text.is_empty() {
+                    o.text.clone()
+                } else {
+                    text
+                };
                 let part = json!({ "type": "output_text", "text": final_text, "annotations": [], "logprobs": [] });
                 let item = json!({ "id": o.id, "type": "message", "status": "completed", "role": "assistant", "content": [part.clone()] });
                 if let Some(slot) = self.output.get_mut(o.output_index) {
@@ -334,7 +338,11 @@ impl ResponsesWriter {
                 let Some(o) = self.open.remove(&item_id) else {
                     return frames;
                 };
-                let parts: Vec<String> = if summary.is_empty() { o.parts.clone() } else { summary };
+                let parts: Vec<String> = if summary.is_empty() {
+                    o.parts.clone()
+                } else {
+                    summary
+                };
                 for (i, text) in parts.iter().enumerate() {
                     frames.push(self.event(
                         "response.reasoning_summary_text.done",
@@ -502,7 +510,10 @@ impl ResponsesWriter {
             o.insert("output".into(), Value::Array(self.output.clone()));
             o.insert("usage".into(), usage_json(&usage));
             if reason == DoneReason::Interrupted {
-                o.insert("incomplete_details".into(), json!({ "reason": "interrupted" }));
+                o.insert(
+                    "incomplete_details".into(),
+                    json!({ "reason": "interrupted" }),
+                );
             }
             if reason == DoneReason::Error {
                 o.insert(
@@ -529,10 +540,7 @@ pub fn usage_json(u: &Usage) -> Value {
 }
 
 fn short_id(s: &str) -> String {
-    let cleaned: String = s
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let cleaned: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if cleaned.is_empty() {
         uuid::Uuid::new_v4().simple().to_string()
     } else {

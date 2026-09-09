@@ -51,9 +51,13 @@ reasoning_effort = ""      # low | medium | high | xhigh | …
 reasoning_summary = ""     # auto | concise | detailed | none
 sandbox = "read-only"      # read-only | workspace-write | danger-full-access
 approval_policy = "never"  # never | on-request | untrusted
-# full = keep Codex's own tools (shell, apply_patch, update_plan, web search…):
-#        the request on the wire is exactly a normal Codex turn.
-# none = disable Codex's built-in tools; only the client's tools are offered.
+# full        = keep Codex's own tools (shell, apply_patch, update_plan, web search…):
+#               the request on the wire is exactly a normal Codex turn.
+# none        = disable Codex's built-in tools; only the client's tools are offered
+#               (still normalized by Codex, code-mode wrapped on models that use it).
+# passthrough = the client's tools replace Codex's and go upstream verbatim
+#               (raw schema, strict, order); headers/instructions/telemetry stay
+#               Codex's. `codexs server` defaults to this.
 codex_tools = "full"
 # developer = client system prompt -> `developerInstructions`; ignore = drop it.
 system_prompt_mode = "developer"

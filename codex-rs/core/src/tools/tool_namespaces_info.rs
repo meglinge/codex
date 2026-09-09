@@ -40,7 +40,7 @@ pub(super) fn collect_tool_namespaces_info(
                 native_tool_search_visible = true;
                 direct_functions.insert((TOOL_SEARCH_TOOL_NAME, TOOL_SEARCH_FUNCTION_NAME));
             }
-            ToolSpec::WebSearch { .. } => {}
+            ToolSpec::WebSearch { .. } | ToolSpec::Raw(_) => {}
         }
     }
 

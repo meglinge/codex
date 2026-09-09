@@ -40,7 +40,7 @@ pub fn tools_key(tools: &[ToolSpec]) -> String {
         s.push('\u{1}');
         s.push_str(&t.description);
         s.push('\u{1}');
-        s.push_str(&t.parameters.to_string());
+        s.push_str(&t.raw.to_string());
         s.push('\u{2}');
     }
     hash_hex(&s)
@@ -192,8 +192,8 @@ mod tests {
         let c = transcript_key("sys", "tk", &[user("hi"), assistant("hello!")]);
         assert_ne!(a, c);
         let t1 = vec![
-            ToolSpec { name: "b".into(), description: "".into(), parameters: serde_json::json!({}) },
-            ToolSpec { name: "a".into(), description: "".into(), parameters: serde_json::json!({}) },
+            ToolSpec::from_parts("b".into(), &serde_json::json!({}), "function"),
+            ToolSpec::from_parts("a".into(), &serde_json::json!({}), "function"),
         ];
         let t2 = vec![t1[1].clone(), t1[0].clone()];
         assert_eq!(tools_key(&t1), tools_key(&t2));

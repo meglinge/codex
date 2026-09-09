@@ -151,6 +151,19 @@ pub(crate) fn build_tool_router(
         wait_agent_timeouts: wait_agent_timeout_options(turn_context),
     };
     let mut registry = ToolRegistry::default();
+    if turn_context.config.client_tools_only {
+        // ASXS: the client's dynamic tools are the whole tool surface. No shell /
+        // apply_patch / plan / MCP / hosted tools, and no code-mode wrapping
+        // (`requested_tool_mode` reports Direct for this config).
+        append_dynamic_tool_runtimes(&turn_context.dynamic_tools, &mut registry);
+        return finalize_tool_router(
+            turn_context,
+            model_info,
+            registry,
+            Vec::new(),
+            &session.services.tool_search_handler_cache,
+        );
+    }
     add_core_tool_sources(&context, &mut registry);
 
     let hosted_specs = if crate::guardian::is_basic_session_source(&turn_context.session_source) {
@@ -434,7 +447,9 @@ pub(crate) fn finalize_tool_router(
             if include_tool_namespaces_info && tool.exposure != ToolExposure::Hidden {
                 let namespace_name = match spec {
                     ToolSpec::Namespace(namespace) => namespace.name.as_str(),
-                    ToolSpec::Function(_) | ToolSpec::Freeform(_) => DEFAULT_FUNCTION_NAMESPACE,
+                    ToolSpec::Function(_) | ToolSpec::Freeform(_) | ToolSpec::Raw(_) => {
+                        DEFAULT_FUNCTION_NAMESPACE
+                    }
                     ToolSpec::ToolSearch { .. } => TOOL_SEARCH_TOOL_NAME,
                     ToolSpec::WebSearch { .. } => continue,
                 };
@@ -828,7 +843,10 @@ fn register_code_mode_executors(
             ToolSpec::Namespace(namespace) if !namespace.tools.is_empty() => {
                 codex_tools::code_mode_name_for_tool_name(&tool_name)
             }
-            ToolSpec::Namespace(_) | ToolSpec::ToolSearch { .. } | ToolSpec::WebSearch { .. } => {
+            ToolSpec::Namespace(_)
+            | ToolSpec::ToolSearch { .. }
+            | ToolSpec::WebSearch { .. }
+            | ToolSpec::Raw(_) => {
                 continue;
             }
         };
@@ -1398,6 +1416,16 @@ fn append_dynamic_tool_runtimes(dynamic_tools: &[DynamicToolSpec], registry: &mu
                     };
                     registry.register_external(Arc::new(handler));
                 }
+            }
+            DynamicToolSpec::Verbatim(spec) => {
+                let Some(handler) = DynamicToolHandler::new_verbatim(spec) else {
+                    tracing::error!(
+                        "verbatim dynamic tool has no string `name`: {:?}",
+                        spec.tool
+                    );
+                    continue;
+                };
+                registry.register_external(Arc::new(handler));
             }
         }
     }

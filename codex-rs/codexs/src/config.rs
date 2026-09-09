@@ -93,8 +93,26 @@ pub enum CodexToolsMode {
     /// Keep Codex's own tools (shell, apply_patch, update_plan, web search …).
     /// The wire request is exactly what a normal Codex turn sends.
     Full,
-    /// Disable Codex's built-in tools so only the client's tools are offered.
+    /// Disable Codex's built-in tools so only the client's tools are offered
+    /// (still shaped by Codex: sanitized schemas, code-mode wrapping when the
+    /// model uses it).
     None,
+    /// The client's tools replace Codex's tools and go to the model exactly as
+    /// received (raw schema, `strict`, order); nothing else changes, so the
+    /// request keeps Codex's headers, instructions and telemetry. Default in
+    /// `codexs server`.
+    Passthrough,
+}
+
+impl CodexToolsMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "full" => Some(Self::Full),
+            "none" => Some(Self::None),
+            "passthrough" => Some(Self::Passthrough),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -306,7 +324,8 @@ pub fn load(explicit: Option<PathBuf>) -> anyhow::Result<(ProxyConfig, PathBuf)>
     let mut config = if path.exists() {
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        toml::from_str::<ProxyConfig>(&raw).with_context(|| format!("parsing {}", path.display()))?
+        toml::from_str::<ProxyConfig>(&raw)
+            .with_context(|| format!("parsing {}", path.display()))?
     } else {
         tracing::warn!("config file {} not found; using defaults", path.display());
         ProxyConfig::default()
@@ -335,7 +354,9 @@ pub fn load(explicit: Option<PathBuf>) -> anyhow::Result<(ProxyConfig, PathBuf)>
             .collect();
     }
 
-    if config.accounts.is_empty() && config.auth.client_credentials != ClientCredentialsMode::Required {
+    if config.accounts.is_empty()
+        && config.auth.client_credentials != ClientCredentialsMode::Required
+    {
         config.accounts.push(AccountConfig {
             id: "default".to_string(),
             codex_home: default_codex_home(),

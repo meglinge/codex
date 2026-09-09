@@ -12,6 +12,7 @@ use crate::tools::registry::ToolExposure;
 use codex_protocol::dynamic_tools::DynamicToolFunctionSpec;
 use codex_protocol::dynamic_tools::DynamicToolNamespaceSpec;
 use codex_protocol::dynamic_tools::DynamicToolResponse;
+use codex_protocol::dynamic_tools::DynamicToolVerbatimSpec;
 use codex_protocol::items::DynamicToolCallItem;
 use codex_protocol::items::DynamicToolCallStatus;
 use codex_protocol::items::TurnItem;
@@ -45,6 +46,16 @@ impl DynamicToolHandler {
         tool: &DynamicToolFunctionSpec,
     ) -> Option<Self> {
         Self::from_parts(tool, Some(namespace))
+    }
+
+    /// A client tool forwarded to the model exactly as received (ASXS).
+    pub fn new_verbatim(spec: &DynamicToolVerbatimSpec) -> Option<Self> {
+        let name = spec.name()?;
+        Some(Self {
+            tool_name: ToolName::new(/*namespace*/ None, name),
+            spec: ToolSpec::Raw(spec.tool.clone()),
+            exposure: ToolExposure::Direct,
+        })
     }
 
     fn from_parts(

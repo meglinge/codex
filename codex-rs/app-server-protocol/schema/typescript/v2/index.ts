@@ -129,6 +129,7 @@ export type { DynamicToolFunctionSpec } from "./DynamicToolFunctionSpec";
 export type { DynamicToolNamespaceSpec } from "./DynamicToolNamespaceSpec";
 export type { DynamicToolNamespaceTool } from "./DynamicToolNamespaceTool";
 export type { DynamicToolSpec } from "./DynamicToolSpec";
+export type { DynamicToolVerbatimSpec } from "./DynamicToolVerbatimSpec";
 export type { EnvironmentConnectionNotification } from "./EnvironmentConnectionNotification";
 export type { ErrorNotification } from "./ErrorNotification";
 export type { ExecPolicyAmendment } from "./ExecPolicyAmendment";

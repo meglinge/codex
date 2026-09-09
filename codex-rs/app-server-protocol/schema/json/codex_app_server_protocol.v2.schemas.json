@@ -6590,6 +6590,27 @@
           ],
           "title": "NamespaceDynamicToolSpec",
           "type": "object"
+        },
+        {
+          "description": "A Responses API function tool object forwarded to the model verbatim (ASXS extension). Codex neither normalizes the schema nor rewrites the description; calls are routed back to the client by `tool.name`.",
+          "properties": {
+            "tool": {
+              "description": "The wire tool object: `{\"type\": \"function\", \"name\": ..., \"description\": ..., \"parameters\": ..., \"strict\": ...}`."
+            },
+            "type": {
+              "enum": [
+                "verbatim"
+              ],
+              "title": "VerbatimDynamicToolSpecType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "tool",
+            "type"
+          ],
+          "title": "VerbatimDynamicToolSpec",
+          "type": "object"
         }
       ]
     },

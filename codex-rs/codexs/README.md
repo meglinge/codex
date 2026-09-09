@@ -162,8 +162,8 @@ Sessions are pinned to the account that created them.
 * `GET /v1/sessions` — live sessions / accounts (debug).
 
 Request headers: `x-asxs-session: <sess_id>` (pin a session),
-`x-asxs-account: <id>`, `x-asxs-codex-tools: none|full` (per-request override of
-`defaults.codex_tools`).
+`x-asxs-account: <id>`, `x-asxs-codex-tools: passthrough|none|full` (per-request
+override of `defaults.codex_tools`).
 
 ### Server mode: client-supplied credentials
 
@@ -206,7 +206,7 @@ thread is created for the conversation:
 | --- | --- |
 | `session_id`, `account_id` | pin an existing session / static account |
 | `model`, `reasoning_effort`, `reasoning_summary`, `service_tier` | same as the standard OpenAI fields |
-| `codex_tools` | `"full"` or `"none"` |
+| `codex_tools` | `"passthrough"`, `"none"` or `"full"` |
 | `sandbox`, `approval_policy`, `personality`, `cwd`, `ephemeral` | `thread/start` settings |
 | `developer_instructions` | appended to the system prompt's developer block |
 | `base_instructions` | replaces Codex's base system prompt (deviates from stock Codex) |
@@ -236,7 +236,16 @@ commands in the per-session workspace under the configured sandbox).
 `"none"` disables them via config overrides (`features.shell_tool=false`,
 `features.view_image=false`, `web_search="disabled"`,
 `tools.update_plan.enabled=false`, `mcp_servers={}`) so only client tools are
-offered.
+offered — but Codex still normalizes their schemas and, on models that use
+code mode, folds them into the `exec` tool.
+
+`"passthrough"` (the default of `codexs server`, `--codex-tools` to change) makes
+the client's `tools` the *entire* tool list on the wire, byte-for-byte as
+received (raw JSON schema, `strict`, order, names untouched). Codex's tools,
+MCP tools and code mode are off for that thread; everything else — base
+instructions, environment context, headers, prompt cache key, telemetry — is
+still produced by Codex. This needs the ASXS Codex patch (`tools.client_only`
+config + `verbatim` dynamic tools); stock Codex rejects it with 400.
 
 ## Smoke test
 

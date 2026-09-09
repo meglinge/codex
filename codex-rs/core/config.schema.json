@@ -3809,6 +3809,10 @@
     "ToolsToml": {
       "additionalProperties": false,
       "properties": {
+        "client_only": {
+          "description": "ASXS: offer the model only the thread's dynamic (client) tools, as plain function tools; disables every built-in, MCP and hosted tool and code mode.",
+          "type": "boolean"
+        },
         "experimental_request_user_input": {
           "$ref": "#/definitions/ExperimentalRequestUserInput"
         },

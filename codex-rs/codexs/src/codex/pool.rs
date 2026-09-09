@@ -98,7 +98,11 @@ impl AccountPool {
     ) -> anyhow::Result<Arc<CodexRuntime>> {
         let id = format!("id:{}", identity.key);
         let _guard = self.identity_start.lock().await;
-        let existing = self.identities.lock().ok().and_then(|m| m.get(&id).cloned());
+        let existing = self
+            .identities
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&id).cloned());
         if let Some(rt) = existing {
             if !credentials_changed {
                 rt.touch();

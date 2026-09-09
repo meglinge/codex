@@ -10,6 +10,44 @@ pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: Value,
+    /// The tool exactly as the client sent it, normalized to the Responses
+    /// flat shape (`{"type":"function","name",...}`) when it arrived in the
+    /// Chat nested shape. Sent to the model untouched in `passthrough` mode.
+    pub raw: Value,
+}
+
+impl ToolSpec {
+    /// Build the flat Responses tool object from the fields a client provided,
+    /// keeping unknown keys (e.g. `strict`) and omitting what was not given.
+    pub fn from_parts(name: String, function: &Value, ty: &str) -> Self {
+        let description = function
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let parameters = function
+            .get("parameters")
+            .or_else(|| function.get("input_schema"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} }));
+        let mut raw = serde_json::Map::new();
+        raw.insert("type".into(), Value::String(ty.to_string()));
+        raw.insert("name".into(), Value::String(name.clone()));
+        if let Some(obj) = function.as_object() {
+            for (k, v) in obj {
+                if k == "type" || k == "name" {
+                    continue;
+                }
+                raw.insert(k.clone(), v.clone());
+            }
+        }
+        Self {
+            name,
+            description,
+            parameters,
+            raw: Value::Object(raw),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

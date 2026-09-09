@@ -18,8 +18,8 @@ use super::openai::ChatMeta;
 use super::openai::parse_chat;
 use super::server::ApiError;
 use super::server::AppState;
-use super::server::now_secs;
 use super::server::apply_request_context;
+use super::server::now_secs;
 use crate::bridge::RunHandle;
 use crate::bridge::types::BridgeEvent;
 use crate::bridge::types::DoneReason;
@@ -328,7 +328,11 @@ fn activity_line(item: &Value, completed: bool) -> Option<String> {
             let exit = item.get("exitCode").and_then(Value::as_i64).unwrap_or(-1);
             let mut o = out.trim_end().to_string();
             if o.len() > 4000 {
-                let cut = o.char_indices().nth(4000).map(|(i, _)| i).unwrap_or(o.len());
+                let cut = o
+                    .char_indices()
+                    .nth(4000)
+                    .map(|(i, _)| i)
+                    .unwrap_or(o.len());
                 o.truncate(cut);
                 o.push_str("\n…");
             }

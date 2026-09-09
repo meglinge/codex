@@ -993,6 +993,7 @@ impl ModelClient {
             client_metadata: Some(responses_metadata.client_metadata()),
             access_programs: None,
         };
+        dump_request_for_debugging(&request);
         Ok(request)
     }
 
@@ -2742,3 +2743,33 @@ impl WebsocketTelemetry for ApiTelemetry {
 #[cfg(test)]
 #[path = "client_tests.rs"]
 mod tests;
+
+/// ASXS debug aid: when `CODEX_DUMP_REQUESTS_DIR` is set, write every outbound
+/// Responses request (as JSON) into that directory.
+fn dump_request_for_debugging(request: &ResponsesApiRequest) {
+    let Some(dir) = std::env::var_os("CODEX_DUMP_REQUESTS_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if dir.as_os_str().is_empty() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("request-{stamp}-{}.json", Uuid::new_v4().simple()));
+    match serde_json::to_vec_pretty(request) {
+        Ok(bytes) => {
+            if let Err(err) =
+                std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, bytes))
+            {
+                warn!(
+                    "CODEX_DUMP_REQUESTS_DIR: failed to write {}: {err}",
+                    path.display()
+                );
+            }
+        }
+        Err(err) => warn!("CODEX_DUMP_REQUESTS_DIR: failed to serialize request: {err}"),
+    }
+}

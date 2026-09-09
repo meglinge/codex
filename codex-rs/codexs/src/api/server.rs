@@ -162,7 +162,10 @@ async fn auth(State(state): State<Arc<AppState>>, req: Request<Body>, next: Next
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     if let Some(v) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
         let v = v.trim();
-        if let Some(rest) = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")) {
+        if let Some(rest) = v
+            .strip_prefix("Bearer ")
+            .or_else(|| v.strip_prefix("bearer "))
+        {
             return Some(rest.trim());
         }
     }
@@ -215,7 +218,9 @@ async fn models(State(state): State<Arc<AppState>>) -> Result<Json<Value>, ApiEr
             Err(e) => tracing::warn!(account = %rt.id, "model/list failed: {e}"),
         }
     }
-    Ok(Json(json!({ "object": "list", "data": seen.into_values().collect::<Vec<_>>() })))
+    Ok(Json(
+        json!({ "object": "list", "data": seen.into_values().collect::<Vec<_>>() }),
+    ))
 }
 
 async fn sessions(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -299,12 +304,11 @@ pub fn apply_request_context(
             req.service_tier = Some(v);
         }
         if let Some(v) = s("codex_tools") {
-            req.codex_tools = match v.as_str() {
-                "none" => Some(crate::config::CodexToolsMode::None),
-                "full" => Some(crate::config::CodexToolsMode::Full),
-                other => {
+            req.codex_tools = match crate::config::CodexToolsMode::parse(&v) {
+                Some(mode) => Some(mode),
+                None => {
                     return Err(ApiError::bad_request(format!(
-                        "asxs.codex_tools must be \"none\" or \"full\", got {other:?}"
+                        "asxs.codex_tools must be \"passthrough\", \"none\" or \"full\", got {v:?}"
                     )));
                 }
             };
@@ -366,7 +370,10 @@ pub fn apply_request_context(
 }
 
 /// Stored (possibly Codex-refreshed) tokens for the presented identity.
-async fn asxs_auth(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Json<Value>, ApiError> {
+async fn asxs_auth(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
     if state.cfg.auth.client_credentials == ClientCredentialsMode::Disabled {
         return Err(ApiError::bad_request("client credentials are disabled"));
     }
@@ -406,11 +413,8 @@ pub fn overrides_from_headers(headers: &HeaderMap) -> RequestOverrides {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
-    let codex_tools = h("x-asxs-codex-tools").and_then(|v| match v.as_str() {
-        "none" => Some(crate::config::CodexToolsMode::None),
-        "full" => Some(crate::config::CodexToolsMode::Full),
-        _ => None,
-    });
+    let codex_tools =
+        h("x-asxs-codex-tools").and_then(|v| crate::config::CodexToolsMode::parse(&v));
     RequestOverrides {
         session_id: h("x-asxs-session"),
         account_id: h("x-asxs-account"),

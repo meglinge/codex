@@ -112,7 +112,9 @@ impl RunHandle {
             self.session
                 .runtime
                 .active_turns
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    Some(v.saturating_sub(1))
+                })
                 .ok();
         }
     }
@@ -137,7 +139,9 @@ impl Drop for RunHandle {
             session
                 .runtime
                 .active_turns
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    Some(v.saturating_sub(1))
+                })
                 .ok();
         });
     }
@@ -252,7 +256,9 @@ impl Bridge {
         let mut session: Option<Arc<Session>> = None;
         if let Some(prev) = &req.previous_response_id {
             session = Some(self.session_by_response(prev).ok_or_else(|| {
-                BridgeError::NotFound(format!("previous_response_id {prev} is not a live response"))
+                BridgeError::NotFound(format!(
+                    "previous_response_id {prev} is not a live response"
+                ))
             })?);
         } else if let Some(sid) = &req.session_id {
             session = Some(
@@ -359,7 +365,8 @@ impl Bridge {
                 && turn.status() != TurnStatus::Finished
             {
                 info!(session = %s.id, "abandoning in-flight turn for new input");
-                turn.fail_pending("The client abandoned this tool call.").await;
+                turn.fail_pending("The client abandoned this tool call.")
+                    .await;
                 turn.interrupt().await;
                 if !turn.wait_finished(Duration::from_secs(20)).await {
                     return Err(BridgeError::Unavailable(
@@ -369,7 +376,9 @@ impl Bridge {
                 s.set_turn(None);
                 s.runtime
                     .active_turns
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        Some(v.saturating_sub(1))
+                    })
                     .ok();
             }
             if user_parts.is_empty() {
@@ -378,9 +387,7 @@ impl Bridge {
                         .to_string(),
                 ));
             }
-            let (turn, events) = self
-                .start_turn(&s, &req, &user_parts, None)
-                .await?;
+            let (turn, events) = self.start_turn(&s, &req, &user_parts, None).await?;
             let response_id = new_response_id();
             return Ok(RunHandle {
                 model: s.model.clone(),
@@ -427,11 +434,14 @@ impl Bridge {
                         identity.key
                     ))
                 })?,
-            None => self.pool.acquire(req.account_id.as_deref()).ok_or_else(|| {
-                BridgeError::Unavailable(
-                    "no Codex account available; supply codex credentials".to_string(),
-                )
-            })?,
+            None => self
+                .pool
+                .acquire(req.account_id.as_deref())
+                .ok_or_else(|| {
+                    BridgeError::Unavailable(
+                        "no Codex account available; supply codex credentials".to_string(),
+                    )
+                })?,
         };
         let session = self
             .create_session(runtime, &req, instructions, tkey, scope, initial_history)
@@ -472,8 +482,13 @@ impl Bridge {
             .await
             .map_err(|e| anyhow!("creating workspace {}: {e}", cwd.display()))?;
 
-        let (dynamic_tools, tool_names) = dynamic_tools_json(&req.tools);
         let defaults = &self.cfg.defaults;
+        let codex_tools = req.codex_tools.unwrap_or(defaults.codex_tools);
+        let (dynamic_tools, tool_names) = if codex_tools == CodexToolsMode::Passthrough {
+            verbatim_tools_json(&req.tools)
+        } else {
+            dynamic_tools_json(&req.tools)
+        };
         let model = req
             .model
             .clone()
@@ -482,13 +497,21 @@ impl Bridge {
             .or_else(|| (!runtime.default_model.is_empty()).then(|| runtime.default_model.clone()));
 
         let mut config_overrides: serde_json::Map<String, Value> = serde_json::Map::new();
-        let codex_tools = req.codex_tools.unwrap_or(defaults.codex_tools);
-        if codex_tools == CodexToolsMode::None {
-            config_overrides.insert("features.shell_tool".into(), json!(false));
-            config_overrides.insert("features.view_image".into(), json!(false));
-            config_overrides.insert("web_search".into(), json!("disabled"));
-            config_overrides.insert("tools.update_plan.enabled".into(), json!(false));
-            config_overrides.insert("mcp_servers".into(), json!({}));
+        match codex_tools {
+            CodexToolsMode::Full => {}
+            CodexToolsMode::None => {
+                config_overrides.insert("features.shell_tool".into(), json!(false));
+                config_overrides.insert("features.view_image".into(), json!(false));
+                config_overrides.insert("web_search".into(), json!("disabled"));
+                config_overrides.insert("tools.update_plan.enabled".into(), json!(false));
+                config_overrides.insert("mcp_servers".into(), json!({}));
+            }
+            CodexToolsMode::Passthrough => {
+                // Patched Codex: the dynamic tools are the whole tool surface,
+                // sent verbatim, never wrapped in code mode.
+                config_overrides.insert("tools.client_only".into(), json!(true));
+                config_overrides.insert("mcp_servers".into(), json!({}));
+            }
         }
         for (k, v) in &req.thread.config {
             config_overrides.insert(k.clone(), v.clone());
@@ -503,7 +526,9 @@ impl Bridge {
             "experimentalRawEvents": true,
             "dynamicTools": dynamic_tools,
         });
-        let obj = params.as_object_mut().ok_or_else(|| anyhow!("params must be an object"))?;
+        let obj = params
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("params must be an object"))?;
         if let Some(m) = &model {
             obj.insert("model".into(), json!(m));
         }
@@ -524,11 +549,10 @@ impl Bridge {
         {
             obj.insert("baseInstructions".into(), json!(base));
         }
-        let personality = t
-            .personality
-            .clone()
-            .filter(|p| !p.is_empty())
-            .or_else(|| (!defaults.personality.is_empty()).then(|| defaults.personality.clone()));
+        let personality =
+            t.personality.clone().filter(|p| !p.is_empty()).or_else(|| {
+                (!defaults.personality.is_empty()).then(|| defaults.personality.clone())
+            });
         if let Some(p) = personality {
             obj.insert("personality".into(), json!(p));
         }
@@ -551,6 +575,13 @@ impl Bridge {
             if msg.contains("initialHistory") {
                 BridgeError::BadRequest(format!(
                     "this Codex build does not support initialHistory (set sessions.history_seeding = \"preamble\"): {msg}"
+                ))
+            } else if msg.contains("dynamic tool") {
+                // Codex validated the client's tools (name pattern, duplicates…).
+                BridgeError::BadRequest(format!("invalid tools: {msg}"))
+            } else if msg.contains("client_only") || msg.contains("verbatim") {
+                BridgeError::BadRequest(format!(
+                    "this Codex build does not support codex_tools = \"passthrough\" (needs the ASXS patch): {msg}"
                 ))
             } else {
                 BridgeError::Internal(e)
@@ -603,18 +634,18 @@ impl Bridge {
         let defaults = &self.cfg.defaults;
         let input = user_input_json(user_parts, preamble);
         let mut params = json!({ "threadId": session.thread_id, "input": input });
-        let obj = params.as_object_mut().ok_or_else(|| anyhow!("params must be an object"))?;
-        let effort = req
-            .reasoning_effort
-            .clone()
-            .or_else(|| (!defaults.reasoning_effort.is_empty()).then(|| defaults.reasoning_effort.clone()));
+        let obj = params
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("params must be an object"))?;
+        let effort = req.reasoning_effort.clone().or_else(|| {
+            (!defaults.reasoning_effort.is_empty()).then(|| defaults.reasoning_effort.clone())
+        });
         if let Some(e) = effort {
             obj.insert("effort".into(), json!(e));
         }
-        let summary = req
-            .reasoning_summary
-            .clone()
-            .or_else(|| (!defaults.reasoning_summary.is_empty()).then(|| defaults.reasoning_summary.clone()));
+        let summary = req.reasoning_summary.clone().or_else(|| {
+            (!defaults.reasoning_summary.is_empty()).then(|| defaults.reasoning_summary.clone())
+        });
         if let Some(s) = summary {
             obj.insert("summary".into(), json!(s));
         }
@@ -675,7 +706,9 @@ impl Bridge {
         for s in sessions {
             if let Some(turn) = s.current_turn()
                 && turn.status() == TurnStatus::AwaitingTools
-                && turn.awaiting_since().is_some_and(|t| t.elapsed() > tool_timeout)
+                && turn
+                    .awaiting_since()
+                    .is_some_and(|t| t.elapsed() > tool_timeout)
             {
                 warn!(session = %s.id, "tool result timeout; interrupting turn");
                 turn.fail_pending("The client did not return a tool result in time.")
@@ -685,7 +718,9 @@ impl Bridge {
                 s.set_turn(None);
                 s.runtime
                     .active_turns
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        Some(v.saturating_sub(1))
+                    })
                     .ok();
             }
             if s.current_turn().is_none() && s.idle_for() > idle_ttl {
@@ -710,7 +745,9 @@ impl Bridge {
         }
         s.runtime
             .sessions
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| Some(v.saturating_sub(1)))
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
+            })
             .ok();
         if let Err(e) = s
             .runtime
@@ -788,7 +825,13 @@ pub fn user_input_json(parts: &[UserPart], preamble: Option<&str>) -> Vec<Value>
 fn sanitize_tool_name(name: &str) -> String {
     let mut s: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if s.is_empty() {
         s = "tool".to_string();
@@ -823,6 +866,18 @@ fn dynamic_tools_json(tools: &[ToolSpec]) -> (Vec<Value>, HashMap<String, String
             "description": t.description,
             "inputSchema": schema,
         }));
+    }
+    (out, names)
+}
+
+/// Passthrough: every client tool becomes a `verbatim` dynamic tool (patched
+/// Codex) — the object goes to the model untouched, names are not rewritten.
+fn verbatim_tools_json(tools: &[ToolSpec]) -> (Vec<Value>, HashMap<String, String>) {
+    let mut out = Vec::with_capacity(tools.len());
+    let mut names = HashMap::new();
+    for t in tools {
+        names.insert(t.name.clone(), t.name.clone());
+        out.push(json!({ "type": "verbatim", "tool": t.raw }));
     }
     (out, names)
 }

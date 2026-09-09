@@ -16,7 +16,9 @@ fn str_of<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn non_empty(s: Option<&str>) -> Option<String> {
-    s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    s.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Accepts both the Responses flat tool shape and the Chat nested shape.
@@ -31,25 +33,34 @@ pub fn parse_tools(v: Option<&Value>) -> Result<Vec<ToolSpec>, ApiError> {
             // web_search / file_search / code_interpreter etc. are not bridged.
             continue;
         }
-        let f = t.get("function").unwrap_or(t);
+        let nested = t.get("function");
+        let f = nested.unwrap_or(t);
         let Some(name) = non_empty(str_of(f, "name")) else {
             return Err(ApiError::bad_request("tool is missing a name"));
         };
-        out.push(ToolSpec {
-            name,
-            description: str_of(f, "description").unwrap_or_default().to_string(),
-            parameters: f
-                .get("parameters")
-                .or_else(|| f.get("input_schema"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
-        });
+        if nested.is_some() {
+            // Chat nested shape: flatten into the Responses tool object.
+            out.push(ToolSpec::from_parts(name, f, ty));
+        } else {
+            // Responses flat shape: keep the object verbatim.
+            let mut spec = ToolSpec::from_parts(name, f, ty);
+            spec.raw = t.clone();
+            out.push(spec);
+        }
     }
     Ok(out)
 }
 
-fn push_assistant(history: &mut Vec<CanonMessage>, text: Option<String>, call: Option<ToolCallRecord>) {
-    if let Some(CanonMessage::Assistant { text: t, tool_calls }) = history.last_mut() {
+fn push_assistant(
+    history: &mut Vec<CanonMessage>,
+    text: Option<String>,
+    call: Option<ToolCallRecord>,
+) {
+    if let Some(CanonMessage::Assistant {
+        text: t,
+        tool_calls,
+    }) = history.last_mut()
+    {
         if let Some(new_text) = text {
             if !t.is_empty() && !new_text.is_empty() {
                 t.push_str("\n\n");
@@ -238,10 +249,16 @@ pub fn parse_responses(body: &Value) -> Result<(ConversationRequest, ResponsesMe
 
     let meta = ResponsesMeta {
         stream: body.get("stream").and_then(Value::as_bool).unwrap_or(false),
-        tools_echo: body.get("tools").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+        tools_echo: body
+            .get("tools")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
         reasoning_echo: body.get("reasoning").cloned().unwrap_or(Value::Null),
         instructions_echo: non_empty(str_of(body, "instructions")),
-        metadata: body.get("metadata").cloned().unwrap_or_else(|| Value::Object(Default::default())),
+        metadata: body
+            .get("metadata")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default())),
         store: body.get("store").and_then(Value::as_bool).unwrap_or(true),
     };
     Ok((req, meta))
@@ -267,24 +284,14 @@ pub fn parse_chat(body: &Value) -> Result<(ConversationRequest, ChatMeta), ApiEr
         // Legacy `functions` parameter.
         for f in functions {
             if let Some(name) = non_empty(str_of(f, "name")) {
-                req.tools.push(ToolSpec {
-                    name,
-                    description: str_of(f, "description").unwrap_or_default().to_string(),
-                    parameters: f
-                        .get("parameters")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
-                });
+                req.tools.push(ToolSpec::from_parts(name, f, "function"));
             }
         }
     }
     if let Some(rf) = body.get("response_format")
         && str_of(rf, "type") == Some("json_schema")
     {
-        req.output_schema = rf
-            .get("json_schema")
-            .and_then(|j| j.get("schema"))
-            .cloned();
+        req.output_schema = rf.get("json_schema").and_then(|j| j.get("schema")).cloned();
     }
 
     let Some(messages) = body.get("messages").and_then(Value::as_array) else {

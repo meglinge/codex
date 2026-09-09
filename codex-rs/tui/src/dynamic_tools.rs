@@ -264,6 +264,7 @@ pub(crate) fn non_delegation_tool_specs() -> Vec<DynamicToolSpec> {
                 });
                 Some(DynamicToolSpec::Namespace(namespace))
             }
+            DynamicToolSpec::Verbatim(spec) => Some(DynamicToolSpec::Verbatim(spec)),
         })
         .collect()
 }

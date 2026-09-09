@@ -13,6 +13,26 @@ use ts_rs::TS;
 pub enum DynamicToolSpec {
     Function(DynamicToolFunctionSpec),
     Namespace(DynamicToolNamespaceSpec),
+    /// A Responses API function tool object forwarded to the model verbatim
+    /// (ASXS extension). Codex neither normalizes the schema nor rewrites the
+    /// description; calls are routed back to the client by `tool.name`.
+    Verbatim(DynamicToolVerbatimSpec),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct DynamicToolVerbatimSpec {
+    /// The wire tool object: `{"type": "function", "name": ..., "description": ...,
+    /// "parameters": ..., "strict": ...}`.
+    #[ts(type = "JsonValue")]
+    pub tool: JsonValue,
+}
+
+impl DynamicToolVerbatimSpec {
+    pub fn name(&self) -> Option<&str> {
+        self.tool.get("name").and_then(JsonValue::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]

@@ -22,6 +22,7 @@ use tracing_subscriber::EnvFilter;
 use crate::codex::identity::ClientCredentials;
 use crate::config::AccountConfig;
 use crate::config::ClientCredentialsMode;
+use crate::config::CodexToolsMode;
 use crate::config::ProxyConfig;
 
 #[derive(Parser, Debug)]
@@ -65,13 +66,28 @@ struct ServerArgs {
     #[arg(long, env = "CODEXS_CODEX_HOME", value_name = "DIR")]
     codex_home: Option<PathBuf>,
     /// ChatGPT OAuth access token (JWT). A private CODEX_HOME is created under --identity-root.
-    #[arg(long, env = "CODEXS_ACCESS_TOKEN", value_name = "JWT", hide_env_values = true)]
+    #[arg(
+        long,
+        env = "CODEXS_ACCESS_TOKEN",
+        value_name = "JWT",
+        hide_env_values = true
+    )]
     access_token: Option<String>,
     /// Refresh token (lets Codex renew the access token itself).
-    #[arg(long, env = "CODEXS_REFRESH_TOKEN", hide_env_values = true, requires = "access_token")]
+    #[arg(
+        long,
+        env = "CODEXS_REFRESH_TOKEN",
+        hide_env_values = true,
+        requires = "access_token"
+    )]
     refresh_token: Option<String>,
     /// ID token (JWT); defaults to the access token.
-    #[arg(long, env = "CODEXS_ID_TOKEN", hide_env_values = true, requires = "access_token")]
+    #[arg(
+        long,
+        env = "CODEXS_ID_TOKEN",
+        hide_env_values = true,
+        requires = "access_token"
+    )]
     id_token: Option<String>,
     /// ChatGPT account id; defaults to the one in the JWT claims.
     #[arg(long, env = "CODEXS_ACCOUNT_ID")]
@@ -91,6 +107,15 @@ struct ServerArgs {
     /// Max concurrent turns for this account.
     #[arg(long)]
     max_concurrent_turns: Option<usize>,
+    /// How client tools meet Codex's tools: passthrough (client tools replace
+    /// Codex's and go upstream verbatim; default), none, full.
+    #[arg(
+        long,
+        env = "CODEXS_CODEX_TOOLS",
+        value_name = "MODE",
+        default_value = "passthrough"
+    )]
+    codex_tools: String,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -155,7 +180,11 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
 
 /// `codexs server`: exactly one static account from the CLI, downstream
 /// credentials ignored, proxy from `--proxy` (falls back to `codex.proxy`).
-fn apply_server_args(cfg: &mut ProxyConfig, config_file_exists: bool, args: ServerArgs) -> anyhow::Result<()> {
+fn apply_server_args(
+    cfg: &mut ProxyConfig,
+    config_file_exists: bool,
+    args: ServerArgs,
+) -> anyhow::Result<()> {
     if args.proxy.is_some() {
         cfg.codex.proxy = args.proxy;
     }
@@ -181,7 +210,10 @@ fn apply_server_args(cfg: &mut ProxyConfig, config_file_exists: bool, args: Serv
             "{} does not contain auth.json (run `codex login` with CODEX_HOME={0})",
             home.display()
         );
-        (args.account_id.unwrap_or_else(|| "default".to_string()), home)
+        (
+            args.account_id.unwrap_or_else(|| "default".to_string()),
+            home,
+        )
     } else {
         let creds = if let Some(file) = args.auth_file {
             credentials_from_auth_file(&file, args.account_id)?
@@ -217,16 +249,28 @@ fn apply_server_args(cfg: &mut ProxyConfig, config_file_exists: bool, args: Serv
         max_concurrent_turns,
         enabled: true,
     }];
+    cfg.defaults.codex_tools = CodexToolsMode::parse(&args.codex_tools).with_context(|| {
+        format!(
+            "--codex-tools must be passthrough, none or full (got {:?})",
+            args.codex_tools
+        )
+    })?;
     // Downstream never supplies Codex credentials in this mode.
     cfg.auth.client_credentials = ClientCredentialsMode::Disabled;
     Ok(())
 }
 
-fn credentials_from_auth_file(path: &Path, account_id: Option<String>) -> anyhow::Result<ClientCredentials> {
-    let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+fn credentials_from_auth_file(
+    path: &Path,
+    account_id: Option<String>,
+) -> anyhow::Result<ClientCredentials> {
+    let raw =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let v: serde_json::Value =
         serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    let tokens = v.get("tokens").context("auth.json has no `tokens` object")?;
+    let tokens = v
+        .get("tokens")
+        .context("auth.json has no `tokens` object")?;
     let field = |k: &str| {
         tokens
             .get(k)

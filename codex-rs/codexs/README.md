@@ -240,8 +240,9 @@ offered — but Codex still normalizes their schemas and, on models that use
 code mode, folds them into the `exec` tool.
 
 `"passthrough"` (the default of `codexs server`, `--codex-tools` to change) makes
-the client's `tools` the *entire* tool list on the wire, byte-for-byte as
-received (raw JSON schema, `strict`, order, names untouched). Codex's tools,
+the client's `tools` the *entire* tool list on the wire, value-for-value as
+received (raw JSON schema, `strict`, order, names untouched; only JSON object
+key order may differ). Codex's tools,
 MCP tools and code mode are off for that thread; everything else — base
 instructions, environment context, headers, prompt cache key, telemetry — is
 still produced by Codex. This needs the ASXS Codex patch (`tools.client_only`

@@ -252,6 +252,42 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Debug aid: with `CODEXS_DUMP_REQUESTS_DIR` set, every incoming request body
+/// is written there as `in-<ms>-<endpoint>.json` (before any lowering).
+pub fn dump_incoming(endpoint: &str, headers: &HeaderMap, body: &Value) {
+    let Some(dir) = std::env::var_os("CODEXS_DUMP_REQUESTS_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if dir.as_os_str().is_empty() {
+        return;
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let hdrs: serde_json::Map<String, Value> = headers
+        .iter()
+        .filter(|(k, _)| k.as_str() != "authorization" && !k.as_str().contains("token"))
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                Value::String(String::from_utf8_lossy(v.as_bytes()).into_owned()),
+            )
+        })
+        .collect();
+    let doc = serde_json::json!({ "endpoint": endpoint, "headers": hdrs, "body": body });
+    let path = dir.join(format!(
+        "in-{ms}-{}.json",
+        endpoint.trim_start_matches('/').replace('/', "_")
+    ));
+    if let Err(e) = std::fs::create_dir_all(&dir)
+        .and_then(|_| std::fs::write(&path, serde_json::to_vec_pretty(&doc).unwrap_or_default()))
+    {
+        tracing::warn!(path = %path.display(), "CODEXS_DUMP_REQUESTS_DIR: {e}");
+    }
+}
+
 /// Apply per-request context: `asxs` body object, `x-asxs-*` headers and
 /// client-supplied Codex credentials.
 pub fn apply_request_context(

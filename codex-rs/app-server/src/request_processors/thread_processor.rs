@@ -389,16 +389,28 @@ fn validate_dynamic_tools(tools: &[DynamicToolSpec]) -> Result<(), String> {
                 if !spec.tool.is_object() {
                     return Err("verbatim dynamic tool must be a JSON object".to_string());
                 }
-                let Some(name) = spec.name() else {
-                    return Err("verbatim dynamic tool must have a string `name`".to_string());
-                };
-                validate_dynamic_tool_identifier(
-                    name,
-                    "dynamic tool name",
-                    DYNAMIC_TOOL_NAME_MAX_LEN,
-                )?;
-                if !seen_tools.insert(name) {
-                    return Err(format!("duplicate dynamic tool name: {name}"));
+                let is_function = spec
+                    .tool
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|t| t == "function")
+                    .unwrap_or(true);
+                match spec.name() {
+                    Some(name) => {
+                        validate_dynamic_tool_identifier(
+                            name,
+                            "dynamic tool name",
+                            DYNAMIC_TOOL_NAME_MAX_LEN,
+                        )?;
+                        if !seen_tools.insert(name) {
+                            return Err(format!("duplicate dynamic tool name: {name}"));
+                        }
+                    }
+                    None if is_function => {
+                        return Err("verbatim function tool must have a string `name`".to_string());
+                    }
+                    // hosted tools (web_search …) carry no name and no runtime
+                    None => {}
                 }
             }
             DynamicToolSpec::Namespace(namespace) => {

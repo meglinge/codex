@@ -609,7 +609,11 @@ impl Bridge {
             .map(str::to_string)
             .or(model)
             .unwrap_or_default();
-        info!(session = %id, thread = %thread_id, account = %runtime.id, model = %model, tools = req.tools.len(), "session created");
+        info!(
+            session = %id, thread = %thread_id, account = %runtime.id, model = %model,
+            tools = req.tools.len(), tool_names = ?req.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+            mode = ?codex_tools, "session created"
+        );
         runtime.sessions.fetch_add(1, Ordering::Relaxed);
 
         let session = Arc::new(Session {
@@ -858,6 +862,10 @@ fn dynamic_tools_json(tools: &[ToolSpec]) -> (Vec<Value>, HashMap<String, String
     let mut names = HashMap::new();
     let mut used: HashSet<String> = HashSet::new();
     for t in tools {
+        if !t.is_function() {
+            // Only passthrough forwards hosted / non-function tools.
+            continue;
+        }
         let mut name = sanitize_tool_name(&t.name);
         let base = name.clone();
         let mut n = 1;

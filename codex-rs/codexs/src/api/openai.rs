@@ -30,13 +30,18 @@ pub fn parse_tools(v: Option<&Value>) -> Result<Vec<ToolSpec>, ApiError> {
     for t in arr {
         let ty = str_of(t, "type").unwrap_or("function");
         if ty != "function" {
-            // web_search / file_search / code_interpreter etc. are not bridged.
+            // web_search / custom / mcp …: kept verbatim so passthrough mode can
+            // forward them; the other modes ignore them (see dynamic_tools_json).
+            let name = str_of(t, "name").unwrap_or_default().to_string();
+            let mut spec = ToolSpec::from_parts(name, t, ty);
+            spec.raw = t.clone();
+            out.push(spec);
             continue;
         }
         let nested = t.get("function");
         let f = nested.unwrap_or(t);
         let Some(name) = non_empty(str_of(f, "name")) else {
-            return Err(ApiError::bad_request("tool is missing a name"));
+            return Err(ApiError::bad_request("function tool is missing a name"));
         };
         if nested.is_some() {
             // Chat nested shape: flatten into the Responses tool object.

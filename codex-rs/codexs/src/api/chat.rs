@@ -31,6 +31,7 @@ pub async fn handle(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
+    super::server::dump_incoming("/v1/chat/completions", &headers, &body);
     let (mut req, meta) = parse_chat(&body)?;
     apply_request_context(&mut req, &headers, &body, &state.cfg)?;
 

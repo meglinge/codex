@@ -156,11 +156,21 @@ pub(crate) fn build_tool_router(
         // apply_patch / plan / MCP / hosted tools, and no code-mode wrapping
         // (`requested_tool_mode` reports Direct for this config).
         append_dynamic_tool_runtimes(&turn_context.dynamic_tools, &mut registry);
+        let hosted_specs = turn_context
+            .dynamic_tools
+            .iter()
+            .filter_map(|spec| match spec {
+                DynamicToolSpec::Verbatim(spec) if spec.name().is_none() => {
+                    Some(ToolSpec::Raw(spec.tool.clone()))
+                }
+                _ => None,
+            })
+            .collect();
         return finalize_tool_router(
             turn_context,
             model_info,
             registry,
-            Vec::new(),
+            hosted_specs,
             &session.services.tool_search_handler_cache,
         );
     }
@@ -1418,11 +1428,9 @@ fn append_dynamic_tool_runtimes(dynamic_tools: &[DynamicToolSpec], registry: &mu
                 }
             }
             DynamicToolSpec::Verbatim(spec) => {
+                // Nameless verbatim tools (web_search, file_search, …) are hosted
+                // by the API: no runtime, they only go into the model-visible specs.
                 let Some(handler) = DynamicToolHandler::new_verbatim(spec) else {
-                    tracing::error!(
-                        "verbatim dynamic tool has no string `name`: {:?}",
-                        spec.tool
-                    );
                     continue;
                 };
                 registry.register_external(Arc::new(handler));

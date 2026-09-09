@@ -17,6 +17,16 @@ pub struct ToolSpec {
 }
 
 impl ToolSpec {
+    /// `type: "function"` (or absent). Anything else (`web_search`, `custom`,
+    /// `mcp`, …) is a hosted/other tool that only passthrough mode forwards.
+    pub fn is_function(&self) -> bool {
+        self.raw
+            .get("type")
+            .and_then(Value::as_str)
+            .map(|t| t == "function")
+            .unwrap_or(true)
+    }
+
     /// Build the flat Responses tool object from the fields a client provided,
     /// keeping unknown keys (e.g. `strict`) and omitting what was not given.
     pub fn from_parts(name: String, function: &Value, ty: &str) -> Self {

@@ -248,6 +248,13 @@ instructions, environment context, headers, prompt cache key, telemetry — is
 still produced by Codex. This needs the ASXS Codex patch (`tools.client_only`
 config + `verbatim` dynamic tools); stock Codex rejects it with 400.
 
+In passthrough the thread's sandbox defaults to `danger-full-access` (nothing
+executes on this host, and a read-only profile in `<environment_context>` makes
+the model declare the workspace read-only and refuse to write through the
+client's tools); `asxs.sandbox` / `x-asxs-sandbox` still override it. The
+`<cwd>` in the environment context is the per-session workspace on this host
+unless the client passes `asxs.cwd` / `x-asxs-cwd`.
+
 ## Smoke test
 
 ```

@@ -518,10 +518,20 @@ impl Bridge {
         }
 
         let t = &req.thread;
+        // Passthrough: nothing runs on this host (Codex's tools are off), and the
+        // client executes its own tools on its own machine — a read-only sandbox
+        // in the environment context would only make the model refuse to write.
+        let sandbox = t.sandbox.clone().unwrap_or_else(|| {
+            if codex_tools == CodexToolsMode::Passthrough {
+                "danger-full-access".to_string()
+            } else {
+                defaults.sandbox.clone()
+            }
+        });
         let mut params = json!({
             "cwd": cwd.to_string_lossy(),
             "approvalPolicy": t.approval_policy.clone().unwrap_or_else(|| defaults.approval_policy.clone()),
-            "sandbox": t.sandbox.clone().unwrap_or_else(|| defaults.sandbox.clone()),
+            "sandbox": sandbox,
             "ephemeral": t.ephemeral.unwrap_or(defaults.ephemeral),
             "experimentalRawEvents": true,
             "dynamicTools": dynamic_tools,

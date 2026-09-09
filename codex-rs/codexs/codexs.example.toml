@@ -57,7 +57,8 @@ approval_policy = "never"  # never | on-request | untrusted
 #               (still normalized by Codex, code-mode wrapped on models that use it).
 # passthrough = the client's tools replace Codex's and go upstream verbatim
 #               (raw schema, strict, order); headers/instructions/telemetry stay
-#               Codex's. `codexs server` defaults to this.
+#               Codex's; sandbox defaults to danger-full-access (nothing runs
+#               here). `codexs server` defaults to this.
 codex_tools = "full"
 # developer = client system prompt -> `developerInstructions`; ignore = drop it.
 system_prompt_mode = "developer"

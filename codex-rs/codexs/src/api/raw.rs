@@ -101,6 +101,7 @@ impl RawForwarder {
             .unwrap_or(false);
 
         let (body, tz) = self.prepare_body(body, parsed)?;
+        dump_outgoing(&body);
         let mut tokens = self.tokens_for(&account).await?;
         let mut resp = self.send(headers, &tokens, &body, stream).await?;
         if resp.status() == StatusCode::UNAUTHORIZED {
@@ -393,6 +394,26 @@ fn persist_tokens(
     std::fs::write(&tmp, serde_json::to_vec_pretty(&v)?)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+/// Debug aid: with `CODEXS_DUMP_REQUESTS_DIR` set, the body as sent upstream
+/// is written there as `raw-<ms>.json`.
+fn dump_outgoing(body: &Bytes) {
+    let Some(dir) = std::env::var_os("CODEXS_DUMP_REQUESTS_DIR") else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    if dir.as_os_str().is_empty() {
+        return;
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("raw-{ms}.json"));
+    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, body)) {
+        warn!(path = %path.display(), "CODEXS_DUMP_REQUESTS_DIR: {e}");
+    }
 }
 
 // ---- request shape ------------------------------------------------------

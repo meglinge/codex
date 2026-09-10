@@ -59,7 +59,10 @@ impl IdMap {
     }
 
     fn mac(&self, label: &[u8], data: &[u8]) -> [u8; 32] {
-        let mut m = HmacSha256::new_from_slice(&self.key).expect("hmac accepts any key length");
+        let mut m = match HmacSha256::new_from_slice(&self.key) {
+            Ok(m) => m,
+            Err(_) => unreachable!("HMAC accepts keys of any length"),
+        };
         m.update(label);
         m.update(&[0]);
         m.update(data);

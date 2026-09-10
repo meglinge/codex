@@ -28,6 +28,7 @@ use crate::config::ProxyConfig;
 pub struct AppState {
     pub cfg: Arc<ProxyConfig>,
     pub bridge: Arc<Bridge>,
+    pub raw: Arc<super::raw::RawForwarder>,
 }
 
 #[derive(Debug)]

@@ -5,6 +5,7 @@ mod api;
 mod bridge;
 mod codex;
 mod config;
+mod tz;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ use crate::config::AccountConfig;
 use crate::config::ClientCredentialsMode;
 use crate::config::CodexToolsMode;
 use crate::config::ProxyConfig;
+use crate::config::RawForwardMode;
 
 #[derive(Parser, Debug)]
 #[command(name = "codexs", version, about)]
@@ -116,6 +118,17 @@ struct ServerArgs {
         default_value = "passthrough"
     )]
     codex_tools: String,
+    /// Raw forwarding of Codex-shaped Responses bodies: auto (default), always, never.
+    #[arg(
+        long,
+        env = "CODEXS_RAW_FORWARD",
+        value_name = "MODE",
+        default_value = "auto"
+    )]
+    raw_forward: String,
+    /// IANA time zone stamped into raw-forwarded requests (default: detected from the egress IP).
+    #[arg(long, env = "CODEXS_TIMEZONE", value_name = "ZONE")]
+    timezone: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -158,9 +171,22 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let bridge = bridge::Bridge::new(Arc::clone(&cfg), Arc::clone(&pool));
     bridge.spawn_reaper();
 
+    // Raw forwarding shares one proxy-aware HTTP client with time zone detection.
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .build()
+        .context("building the raw-forward HTTP client")?;
+    let egress_tz = tz::EgressTimezone::new(cfg.codex.timezone.as_deref(), http.clone())?;
+    egress_tz.spawn_refresh();
+    let raw = Arc::new(api::raw::RawForwarder::new(
+        Arc::clone(&cfg),
+        http,
+        egress_tz,
+    ));
     let state = Arc::new(api::server::AppState {
         cfg: Arc::clone(&cfg),
         bridge,
+        raw,
     });
     let app = api::server::router(state);
     let addr = format!("{}:{}", cfg.listen.host, cfg.listen.port);
@@ -255,6 +281,15 @@ fn apply_server_args(
             args.codex_tools
         )
     })?;
+    cfg.defaults.raw_forward = RawForwardMode::parse(&args.raw_forward).with_context(|| {
+        format!(
+            "--raw-forward must be auto, always or never (got {:?})",
+            args.raw_forward
+        )
+    })?;
+    if let Some(tz) = args.timezone.filter(|t| !t.trim().is_empty()) {
+        cfg.codex.timezone = Some(tz);
+    }
     // Downstream never supplies Codex credentials in this mode.
     cfg.auth.client_credentials = ClientCredentialsMode::Disabled;
     Ok(())

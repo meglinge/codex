@@ -60,6 +60,13 @@ approval_policy = "never"  # never | on-request | untrusted
 #               Codex's; sandbox defaults to danger-full-access (nothing runs
 #               here). `codexs server` defaults to this.
 codex_tools = "full"
+# auto   = a /v1/responses body that Codex itself assembled (client_metadata,
+#          Responses Lite additional_tools, Codex's base prompt as a developer
+#          message) is forwarded upstream as-is: only credentials are swapped
+#          and <environment_context> timezone/date follow the egress IP.
+#          `codexs server` defaults to this; per request: x-asxs-raw: on|off.
+# always / never
+raw_forward = "never"
 # developer = client system prompt -> `developerInstructions`; ignore = drop it.
 system_prompt_mode = "developer"
 ephemeral = false

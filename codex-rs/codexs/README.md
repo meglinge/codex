@@ -167,6 +167,29 @@ Request headers: `x-asxs-session: <sess_id>` (pin a session),
 `x-asxs-account: <id>`, `x-asxs-codex-tools: passthrough|none|full` (per-request
 override of `defaults.codex_tools`).
 
+### Raw forwarding (Codex CLI clients)
+
+A `/v1/responses` body that Codex itself assembled — it carries
+`client_metadata`, a Responses Lite `additional_tools` item, or Codex's base
+prompt as a developer message — already contains everything a normal Codex
+turn sends. Bridging it through the in-process Codex would add a second base
+prompt and a second `<environment_context>`. With `defaults.raw_forward = "auto"`
+(the `codexs server` default; `--raw-forward`, `x-asxs-raw: on|off` per request)
+such bodies go upstream **as the client built them**: same headers (originator,
+User-Agent, installation id, turn metadata, attestation, Lite header), same body,
+same telemetry. codexs only
+
+* swaps `Authorization` / `chatgpt-account-id` for this instance's account
+  (refreshing the token itself when it is about to expire or upstream says 401),
+* rewrites `<timezone>` and `<current_date>` inside `<environment_context>` to
+  the egress IP's zone — detected through the outbound proxy (ipapi.co, ipinfo.io,
+  ip-api.com; refreshed every 6 h) or fixed with `codex.timezone` / `--timezone`,
+* drops `x-asxs-*`, hop-by-hop and forwarded-for headers and the `asxs` body object.
+
+The upstream stream is relayed byte-for-byte. Raw forwarding serves the static
+accounts only (not client-supplied credentials) and goes to
+`codex.chatgpt_base_url` (default `https://chatgpt.com/backend-api/codex`).
+
 ### Server mode: client-supplied credentials
 
 With `[auth] client_credentials = "allowed"` (default) or `"required"`, a

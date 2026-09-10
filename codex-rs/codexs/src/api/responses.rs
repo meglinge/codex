@@ -29,9 +29,14 @@ use crate::bridge::types::Usage;
 pub async fn handle(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    raw_body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    let body: Value = serde_json::from_slice(&raw_body)
+        .map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))?;
     super::server::dump_incoming("/v1/responses", &headers, &body);
+    if let Some(resp) = state.raw.try_forward(&headers, &raw_body, &body).await? {
+        return Ok(resp);
+    }
     let (mut req, meta) = parse_responses(&body)?;
     apply_request_context(&mut req, &headers, &body, &state.cfg)?;
 

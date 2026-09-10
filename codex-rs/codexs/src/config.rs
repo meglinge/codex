@@ -72,6 +72,11 @@ pub struct CodexConfig {
     /// `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`, so it also reaches helper
     /// processes Codex spawns. `codexs server --proxy` overrides it.
     pub proxy: Option<String>,
+    /// Upstream base for raw-forwarded Responses requests.
+    pub chatgpt_base_url: String,
+    /// IANA zone stamped into raw-forwarded `<environment_context>`; empty =
+    /// detect from the egress IP (through the proxy) and refresh periodically.
+    pub timezone: Option<String>,
 }
 
 impl Default for CodexConfig {
@@ -83,6 +88,8 @@ impl Default for CodexConfig {
             approvals: ApprovalAnswer::Accept,
             session_source: "cli".to_string(),
             proxy: None,
+            chatgpt_base_url: "https://chatgpt.com/backend-api/codex".to_string(),
+            timezone: None,
         }
     }
 }
@@ -115,6 +122,32 @@ impl CodexToolsMode {
     }
 }
 
+/// When a `/v1/responses` body is forwarded upstream as the client built it
+/// (see `api::raw`) instead of being bridged through the in-process Codex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RawForwardMode {
+    /// Bodies that Codex itself assembled (`client_metadata`, Responses Lite
+    /// `additional_tools`, Codex's base prompt as a developer message) go raw;
+    /// everything else is bridged. Default in `codexs server`.
+    Auto,
+    /// Every Responses request goes raw.
+    Always,
+    /// Never (config-file mode default).
+    Never,
+}
+
+impl RawForwardMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "auto" => Some(Self::Auto),
+            "always" => Some(Self::Always),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemPromptMode {
@@ -138,6 +171,8 @@ pub struct ThreadDefaults {
     /// `never` | `on-request` | `untrusted`.
     pub approval_policy: String,
     pub codex_tools: CodexToolsMode,
+    /// Forward Codex-shaped Responses bodies upstream untouched (`x-asxs-raw: on|off` per request).
+    pub raw_forward: RawForwardMode,
     pub system_prompt_mode: SystemPromptMode,
     /// Dotted `config.toml` overrides applied to every thread (`-c key=value` semantics).
     pub config_overrides: BTreeMap<String, toml::Value>,
@@ -158,6 +193,7 @@ impl Default for ThreadDefaults {
             sandbox: "read-only".to_string(),
             approval_policy: "never".to_string(),
             codex_tools: CodexToolsMode::Full,
+            raw_forward: RawForwardMode::Never,
             system_prompt_mode: SystemPromptMode::Developer,
             config_overrides: BTreeMap::new(),
             ephemeral: false,

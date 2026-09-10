@@ -75,22 +75,24 @@ struct Tokens {
 }
 
 impl RawForwarder {
-    pub fn new(cfg: Arc<ProxyConfig>, client: reqwest::Client, tz: Arc<EgressTimezone>) -> Self {
-        Self {
+    pub fn new(
+        cfg: Arc<ProxyConfig>,
+        client: reqwest::Client,
+        tz: Arc<EgressTimezone>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
             cfg,
             client,
             tz,
             refresh_lock: Mutex::new(()),
-            tz_re: regex::Regex::new(r"<timezone>[^<]*</timezone>").expect("static regex"),
-            date_re: regex::Regex::new(r"<current_date>\d{4}-\d{2}-\d{2}</current_date>")
-                .expect("static regex"),
+            tz_re: regex::Regex::new(r"<timezone>[^<]*</timezone>")?,
+            date_re: regex::Regex::new(r"<current_date>\d{4}-\d{2}-\d{2}</current_date>")?,
             uuid_re: regex::Regex::new(
                 r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-            )
-            .expect("static regex"),
-            resp_re: regex::Regex::new(r"resp_[0-9a-f]{16,}").expect("static regex"),
+            )?,
+            resp_re: regex::Regex::new(r"resp_[0-9a-f]{16,}")?,
             idmaps: std::sync::Mutex::new(HashMap::new()),
-        }
+        })
     }
 
     fn idmap_for(&self, account: &Account) -> Result<Arc<IdMap>, ApiError> {
@@ -759,7 +761,7 @@ mod tests {
     fn environment_context_is_localised() {
         let cfg = Arc::new(ProxyConfig::default());
         let tz = EgressTimezone::new(Some("Asia/Singapore"), reqwest::Client::new()).expect("tz");
-        let fwd = RawForwarder::new(cfg, reqwest::Client::new(), tz.clone());
+        let fwd = RawForwarder::new(cfg, reqwest::Client::new(), tz.clone()).expect("forwarder");
         let body = r#"{"input":[{"role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>C:\\x</cwd>\n  <current_date>2020-01-01</current_date>\n  <timezone>Asia/Shanghai</timezone>\n</environment_context>"}]}],"asxs":{"session_id":"s"}}"#;
         let parsed: Value = serde_json::from_str(body).expect("json");
         let (out, name) = fwd
@@ -781,7 +783,8 @@ mod tests {
 
     fn forwarder() -> (RawForwarder, Arc<IdMap>) {
         let tz = EgressTimezone::new(Some("UTC"), reqwest::Client::new()).expect("tz");
-        let fwd = RawForwarder::new(Arc::new(ProxyConfig::default()), reqwest::Client::new(), tz);
+        let fwd = RawForwarder::new(Arc::new(ProxyConfig::default()), reqwest::Client::new(), tz)
+            .expect("forwarder");
         (fwd, Arc::new(IdMap::from_key([9; 32])))
     }
 

@@ -179,11 +179,10 @@ async fn run(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         .context("building the raw-forward HTTP client")?;
     let egress_tz = tz::EgressTimezone::new(cfg.codex.timezone.as_deref(), http.clone())?;
     egress_tz.spawn_refresh();
-    let raw = Arc::new(api::raw::RawForwarder::new(
-        Arc::clone(&cfg),
-        http,
-        egress_tz,
-    ));
+    let raw = Arc::new(
+        api::raw::RawForwarder::new(Arc::clone(&cfg), http, egress_tz)
+            .context("building the raw forwarder")?,
+    );
     let state = Arc::new(api::server::AppState {
         cfg: Arc::clone(&cfg),
         bridge,

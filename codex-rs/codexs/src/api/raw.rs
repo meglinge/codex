@@ -515,13 +515,13 @@ fn drop_header(name: &HeaderName) -> bool {
         || n.starts_with("x-forwarded-")
 }
 
-/// Which client headers carry identifiers that must be mapped.
-const ID_HEADERS: &[&str] = &[
-    "session_id",
-    "x-codex-installation-id",
-    "x-codex-window-id",
-    "x-codex-parent-thread-id",
-    "x-codex-turn-metadata",
+/// Headers whose values are never scanned for identifiers (credentials or
+/// tokens handled elsewhere).
+const UNSCANNED_HEADERS: &[&str] = &[
+    "authorization",
+    "cookie",
+    "x-codex-turn-state",
+    "x-oai-attestation",
 ];
 
 /// Upstream headers that identify upstream's side of the request.
@@ -555,9 +555,16 @@ impl RawForwarder {
     /// `client_metadata` object (including the JSON inside its
     /// `x-codex-turn-metadata` string) and the prompt cache key.
     fn build_mapping(&self, headers: &HeaderMap, parsed: &Value, idmap: &IdMap) -> Mapping {
+        // Codex spreads its ids over many headers (session-id / session_id,
+        // thread-id, x-client-request-id, x-codex-window-id `<uuid>:n`,
+        // x-codex-turn-metadata JSON …); scan every header value rather than
+        // keep a list that goes stale with the next CLI release.
         let mut haystack = String::new();
-        for name in ID_HEADERS {
-            if let Some(v) = headers.get(*name).and_then(|v| v.to_str().ok()) {
+        for (name, v) in headers {
+            if UNSCANNED_HEADERS.contains(&name.as_str()) {
+                continue;
+            }
+            if let Ok(v) = v.to_str() {
                 haystack.push_str(v);
                 haystack.push('\n');
             }
@@ -622,7 +629,7 @@ impl RawForwarder {
                 }
                 continue;
             }
-            if ID_HEADERS.contains(&name)
+            if !UNSCANNED_HEADERS.contains(&name)
                 && let Ok(s) = v.to_str()
                 && let Ok(hv) = HeaderValue::from_str(&mapping.forward(s))
             {
@@ -801,7 +808,13 @@ mod tests {
             "previous_response_id": seal_response_id(&idmap, "resp_abcdef0123456789abcdef"),
         });
         let mut headers = HeaderMap::new();
-        headers.insert("session_id", HeaderValue::from_str(sid).unwrap());
+        headers.insert("session-id", HeaderValue::from_str(sid).unwrap());
+        headers.insert("thread-id", HeaderValue::from_str(sid).unwrap());
+        headers.insert("x-client-request-id", HeaderValue::from_str(sid).unwrap());
+        headers.insert(
+            "x-codex-window-id",
+            HeaderValue::from_str(&format!("{sid}:0")).unwrap(),
+        );
         headers.insert(
             "x-codex-installation-id",
             HeaderValue::from_str(inst).unwrap(),
@@ -827,9 +840,23 @@ mod tests {
         );
         let hm = fwd.map_request_headers(&headers, &mapping, &idmap);
         assert_eq!(
-            hm.get("session_id").unwrap().to_str().unwrap(),
+            hm.get("session-id").unwrap().to_str().unwrap(),
             idmap.map_uuid(sid)
         );
+        assert_eq!(
+            hm.get("x-client-request-id").unwrap().to_str().unwrap(),
+            idmap.map_uuid(sid)
+        );
+        assert_eq!(
+            hm.get("x-codex-window-id").unwrap().to_str().unwrap(),
+            format!("{}:0", idmap.map_uuid(sid))
+        );
+        for (_, v) in &hm {
+            assert!(
+                !v.to_str().unwrap_or("").contains(sid),
+                "client session id leaked in a header"
+            );
+        }
         assert_eq!(
             hm.get("x-codex-turn-state").unwrap().as_bytes(),
             b"upstream-blob"

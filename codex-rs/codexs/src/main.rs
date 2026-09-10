@@ -5,6 +5,7 @@ mod api;
 mod bridge;
 mod codex;
 mod config;
+mod idmap;
 mod tz;
 
 use std::path::Path;

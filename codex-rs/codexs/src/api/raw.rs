@@ -6,11 +6,16 @@
 //!   account (tokens refreshed here when expired);
 //! * `<environment_context>`: `<timezone>` and `<current_date>` are rewritten
 //!   to the egress IP's zone, so the request looks produced where it leaves;
-//! * downstream-only headers (`x-asxs-*`, proxy/hop-by-hop, forwarded-for) are dropped.
+//! * downstream-only headers (`x-asxs-*`, proxy/hop-by-hop, forwarded-for) are dropped;
+//! * identifiers are mapped both ways (see `idmap`): the client's installation /
+//!   session / thread / turn ids and prompt cache key become account-keyed
+//!   stand-ins upstream, and upstream's `x-codex-turn-state` / `resp_…` ids reach
+//!   the client only as sealed tokens that are opened again when echoed back.
 //!
 //! Nothing is bridged through the in-process Codex, so no second base prompt,
 //! no second environment context. The upstream stream is relayed byte-for-byte.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -37,7 +42,9 @@ use tracing::warn;
 use super::server::ApiError;
 use crate::config::ProxyConfig;
 use crate::config::RawForwardMode;
+use crate::idmap::IdMap;
 use crate::tz::EgressTimezone;
+use futures::StreamExt;
 
 const OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -51,6 +58,9 @@ pub struct RawForwarder {
     refresh_lock: Mutex<()>,
     tz_re: regex::Regex,
     date_re: regex::Regex,
+    uuid_re: regex::Regex,
+    resp_re: regex::Regex,
+    idmaps: std::sync::Mutex<HashMap<PathBuf, Arc<IdMap>>>,
 }
 
 struct Account {
@@ -74,7 +84,29 @@ impl RawForwarder {
             tz_re: regex::Regex::new(r"<timezone>[^<]*</timezone>").expect("static regex"),
             date_re: regex::Regex::new(r"<current_date>\d{4}-\d{2}-\d{2}</current_date>")
                 .expect("static regex"),
+            uuid_re: regex::Regex::new(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            )
+            .expect("static regex"),
+            resp_re: regex::Regex::new(r"resp_[0-9a-f]{16,}").expect("static regex"),
+            idmaps: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    fn idmap_for(&self, account: &Account) -> Result<Arc<IdMap>, ApiError> {
+        if let Ok(cache) = self.idmaps.lock()
+            && let Some(m) = cache.get(&account.codex_home)
+        {
+            return Ok(Arc::clone(m));
+        }
+        let m = Arc::new(
+            IdMap::load(&account.codex_home)
+                .map_err(|e| ApiError::internal(format!("loading id-map key: {e:#}")))?,
+        );
+        if let Ok(mut cache) = self.idmaps.lock() {
+            cache.insert(account.codex_home.clone(), Arc::clone(&m));
+        }
+        Ok(m)
     }
 
     /// Forward if this request should go raw; `None` = use the Codex bridge.
@@ -101,19 +133,23 @@ impl RawForwarder {
             .unwrap_or(false);
 
         let (body, tz) = self.prepare_body(body, parsed)?;
+        let idmap = self.idmap_for(&account)?;
+        let mapping = Arc::new(self.build_mapping(headers, parsed, &idmap));
+        let body = Bytes::from(self.map_request_body(&body, &mapping, &idmap)?);
+        let headers = self.map_request_headers(headers, &mapping, &idmap);
         dump_outgoing(&body);
         let mut tokens = self.tokens_for(&account).await?;
-        let mut resp = self.send(headers, &tokens, &body, stream).await?;
+        let mut resp = self.send(&headers, &tokens, &body, stream).await?;
         if resp.status() == StatusCode::UNAUTHORIZED {
             warn!(account = %account.id, "upstream 401 on raw forward; refreshing token and retrying once");
             tokens = self.refresh(&account, &tokens).await?;
-            resp = self.send(headers, &tokens, &body, stream).await?;
+            resp = self.send(&headers, &tokens, &body, stream).await?;
         }
         info!(
             account = %account.id, model = %model, stream, tz = tz.as_deref().unwrap_or("-"),
-            status = resp.status().as_u16(), "raw forward"
+            ids = mapping.pairs.len(), status = resp.status().as_u16(), "raw forward"
         );
-        Ok(Some(relay(resp, stream)))
+        Ok(Some(self.relay(resp, stream, mapping, idmap)))
     }
 
     fn should_forward(&self, headers: &HeaderMap, body: &Value) -> bool {
@@ -477,41 +513,222 @@ fn drop_header(name: &HeaderName) -> bool {
         || n.starts_with("x-forwarded-")
 }
 
-/// Relay status, headers and the body stream untouched. Upstream omits
-/// `content-type` on SSE responses; add one so SDK clients can tell.
-fn relay(resp: reqwest::Response, stream: bool) -> Response {
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let mut hm = HeaderMap::new();
-    for (k, v) in resp.headers() {
-        if matches!(
-            k.as_str(),
-            "content-length" | "transfer-encoding" | "connection" | "content-encoding"
-        ) {
-            continue;
+/// Which client headers carry identifiers that must be mapped.
+const ID_HEADERS: &[&str] = &[
+    "session_id",
+    "x-codex-installation-id",
+    "x-codex-window-id",
+    "x-codex-parent-thread-id",
+    "x-codex-turn-metadata",
+];
+
+/// Upstream headers that identify upstream's side of the request.
+const UPSTREAM_ID_HEADERS: &[&str] = &["x-oai-request-id", "x-request-id", "cf-ray"];
+
+/// Client id → upstream stand-in, for one request (both directions).
+pub struct Mapping {
+    pairs: Vec<(String, String)>,
+}
+
+impl Mapping {
+    fn forward(&self, text: &str) -> String {
+        let mut out = text.to_string();
+        for (from, to) in &self.pairs {
+            out = out.replace(from, to);
         }
-        if let (Ok(name), Ok(value)) = (
-            HeaderName::from_bytes(k.as_str().as_bytes()),
-            HeaderValue::from_bytes(v.as_bytes()),
-        ) {
-            hm.append(name, value);
+        out
+    }
+
+    fn reverse(&self, text: &str) -> String {
+        let mut out = text.to_string();
+        for (from, to) in &self.pairs {
+            out = out.replace(to, from);
         }
+        out
     }
-    if !hm.contains_key(header::CONTENT_TYPE) {
-        hm.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static(if stream {
-                "text/event-stream; charset=utf-8"
-            } else {
-                "application/json"
-            }),
-        );
+}
+
+impl RawForwarder {
+    /// Every UUID the client uses to identify itself: the id headers, the
+    /// `client_metadata` object (including the JSON inside its
+    /// `x-codex-turn-metadata` string) and the prompt cache key.
+    fn build_mapping(&self, headers: &HeaderMap, parsed: &Value, idmap: &IdMap) -> Mapping {
+        let mut haystack = String::new();
+        for name in ID_HEADERS {
+            if let Some(v) = headers.get(*name).and_then(|v| v.to_str().ok()) {
+                haystack.push_str(v);
+                haystack.push('\n');
+            }
+        }
+        if let Some(cm) = parsed.get("client_metadata") {
+            haystack.push_str(&cm.to_string());
+            haystack.push('\n');
+        }
+        if let Some(k) = parsed.get("prompt_cache_key").and_then(Value::as_str) {
+            haystack.push_str(k);
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut pairs = Vec::new();
+        for m in self.uuid_re.find_iter(&haystack) {
+            let id = m.as_str().to_ascii_lowercase();
+            if seen.insert(id.clone()) {
+                let mapped = idmap.map_uuid(&id);
+                pairs.push((id, mapped));
+            }
+        }
+        Mapping { pairs }
     }
-    let mut out = Response::builder().status(status);
-    if let Some(h) = out.headers_mut() {
-        *h = hm;
+
+    /// Client ids → stand-ins; a `previous_response_id` we issued → upstream id.
+    fn map_request_body(
+        &self,
+        body: &Bytes,
+        mapping: &Mapping,
+        idmap: &IdMap,
+    ) -> Result<String, ApiError> {
+        let text = std::str::from_utf8(body)
+            .map_err(|_| ApiError::bad_request("request body is not UTF-8"))?;
+        let mut text = mapping.forward(text);
+        if let Ok(v) = serde_json::from_str::<Value>(&text)
+            && let Some(prev) = v.get("previous_response_id").and_then(Value::as_str)
+            && let Some(upstream) = open_response_id(idmap, prev)
+        {
+            text = text.replace(prev, &upstream);
+        }
+        Ok(text)
     }
-    out.body(Body::from_stream(resp.bytes_stream()))
-        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
+
+    /// Same for headers; the turn-state token becomes upstream's blob again,
+    /// and the client's attestation (bound to its own installation) is dropped.
+    fn map_request_headers(
+        &self,
+        headers: &HeaderMap,
+        mapping: &Mapping,
+        idmap: &IdMap,
+    ) -> HeaderMap {
+        let mut out = HeaderMap::new();
+        for (k, v) in headers {
+            let name = k.as_str();
+            if name == "x-oai-attestation" {
+                continue;
+            }
+            if name == "x-codex-turn-state" {
+                if let Some(blob) = v.to_str().ok().and_then(|t| idmap.open(t))
+                    && let Ok(hv) = HeaderValue::from_bytes(&blob)
+                {
+                    out.append(k.clone(), hv);
+                }
+                continue;
+            }
+            if ID_HEADERS.contains(&name)
+                && let Ok(s) = v.to_str()
+                && let Ok(hv) = HeaderValue::from_str(&mapping.forward(s))
+            {
+                out.append(k.clone(), hv);
+                continue;
+            }
+            out.append(k.clone(), v.clone());
+        }
+        out
+    }
+
+    /// Relay status, headers and the body stream, mapping identifiers back:
+    /// upstream `resp_…` ids and the turn-state blob become sealed tokens, our
+    /// stand-ins become the client's ids again, upstream request ids are dropped.
+    fn relay(
+        &self,
+        resp: reqwest::Response,
+        stream: bool,
+        mapping: Arc<Mapping>,
+        idmap: Arc<IdMap>,
+    ) -> Response {
+        let status =
+            StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+        let mut hm = HeaderMap::new();
+        for (k, v) in resp.headers() {
+            let name = k.as_str();
+            if matches!(
+                name,
+                "content-length" | "transfer-encoding" | "connection" | "content-encoding"
+            ) || UPSTREAM_ID_HEADERS.contains(&name)
+            {
+                continue;
+            }
+            let (Ok(hname), Ok(mut value)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_bytes(v.as_bytes()),
+            ) else {
+                continue;
+            };
+            if name == "x-codex-turn-state" {
+                match HeaderValue::from_str(&idmap.seal(v.as_bytes())) {
+                    Ok(sealed) => value = sealed,
+                    Err(_) => continue,
+                }
+            }
+            hm.append(hname, value);
+        }
+        if !hm.contains_key(header::CONTENT_TYPE) {
+            hm.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(if stream {
+                    "text/event-stream; charset=utf-8"
+                } else {
+                    "application/json"
+                }),
+            );
+        }
+        let resp_re = self.resp_re.clone();
+        let mut upstream = resp.bytes_stream();
+        let body = async_stream::stream! {
+            let mut buf: Vec<u8> = Vec::new();
+            while let Some(chunk) = upstream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        buf.extend_from_slice(&bytes);
+                        while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
+                            let line: Vec<u8> = buf.drain(..=pos).collect();
+                            yield Ok::<Bytes, std::io::Error>(Bytes::from(rewrite_line(&line, &resp_re, &mapping, &idmap)));
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(std::io::Error::other(e));
+                        return;
+                    }
+                }
+            }
+            if !buf.is_empty() {
+                yield Ok(Bytes::from(rewrite_line(&buf, &resp_re, &mapping, &idmap)));
+            }
+        };
+        let mut out = Response::builder().status(status);
+        if let Some(h) = out.headers_mut() {
+            *h = hm;
+        }
+        out.body(Body::from_stream(body))
+            .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
+    }
+}
+
+/// One line of the upstream body (SSE line or the whole JSON document).
+fn rewrite_line(line: &[u8], resp_re: &regex::Regex, mapping: &Mapping, idmap: &IdMap) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(line) else {
+        return line.to_vec();
+    };
+    let sealed = resp_re.replace_all(text, |c: &regex::Captures| seal_response_id(idmap, &c[0]));
+    mapping.reverse(&sealed).into_bytes()
+}
+
+fn seal_response_id(idmap: &IdMap, upstream_id: &str) -> String {
+    format!("resp_{}", idmap.seal(upstream_id.as_bytes()))
+}
+
+fn open_response_id(idmap: &IdMap, client_id: &str) -> Option<String> {
+    let token = client_id.strip_prefix("resp_")?;
+    let plain = idmap.open(token)?;
+    String::from_utf8(plain)
+        .ok()
+        .filter(|s| s.starts_with("resp_"))
 }
 
 #[cfg(test)]
@@ -560,6 +777,87 @@ mod tests {
         );
         assert!(!out.contains("asxs"), "{out}");
         assert!(out.contains("<cwd>C:\\\\x</cwd>"), "{out}");
+    }
+
+    fn forwarder() -> (RawForwarder, Arc<IdMap>) {
+        let tz = EgressTimezone::new(Some("UTC"), reqwest::Client::new()).expect("tz");
+        let fwd = RawForwarder::new(Arc::new(ProxyConfig::default()), reqwest::Client::new(), tz);
+        (fwd, Arc::new(IdMap::from_key([9; 32])))
+    }
+
+    #[test]
+    fn ids_are_mapped_both_ways() {
+        let (fwd, idmap) = forwarder();
+        let sid = "01a088c0-9905-7bc0-91d8-2609085bc21c";
+        let inst = "0e5d2033-f9e2-467e-b0af-8635a87b8bbe";
+        let body = json!({
+            "prompt_cache_key": sid,
+            "client_metadata": {"session_id": sid, "x-codex-installation-id": inst,
+                "x-codex-turn-metadata": format!("{{\"installation_id\":\"{inst}\",\"session_id\":\"{sid}\"}}")},
+            "input": [{"role": "user", "content": format!("my id is {sid}")}],
+            "previous_response_id": seal_response_id(&idmap, "resp_abcdef0123456789abcdef"),
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert("session_id", HeaderValue::from_str(sid).unwrap());
+        headers.insert(
+            "x-codex-installation-id",
+            HeaderValue::from_str(inst).unwrap(),
+        );
+        headers.insert("x-oai-attestation", HeaderValue::from_static("att"));
+        headers.insert(
+            "x-codex-turn-state",
+            HeaderValue::from_str(&idmap.seal(b"upstream-blob")).unwrap(),
+        );
+        headers.insert(
+            "x-codex-turn-state-foreign",
+            HeaderValue::from_static("keep"),
+        );
+        let mapping = fwd.build_mapping(&headers, &body, &idmap);
+        assert_eq!(mapping.pairs.len(), 2);
+        let raw = Bytes::from(serde_json::to_string(&body).unwrap());
+        let out = fwd.map_request_body(&raw, &mapping, &idmap).unwrap();
+        assert!(!out.contains(sid) && !out.contains(inst), "{out}");
+        assert!(out.contains(&idmap.map_uuid(sid)), "{out}");
+        assert!(
+            out.contains("resp_abcdef0123456789abcdef"),
+            "previous_response_id opened: {out}"
+        );
+        let hm = fwd.map_request_headers(&headers, &mapping, &idmap);
+        assert_eq!(
+            hm.get("session_id").unwrap().to_str().unwrap(),
+            idmap.map_uuid(sid)
+        );
+        assert_eq!(
+            hm.get("x-codex-turn-state").unwrap().as_bytes(),
+            b"upstream-blob"
+        );
+        assert!(hm.get("x-oai-attestation").is_none());
+        // response direction
+        let line = format!(
+            "data: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_0bd94bc792496946016aa1f8\",\"prompt_cache_key\":\"{}\"}}}}\n",
+            idmap.map_uuid(sid)
+        );
+        let back = String::from_utf8(rewrite_line(
+            line.as_bytes(),
+            &fwd.resp_re,
+            &mapping,
+            &idmap,
+        ))
+        .unwrap();
+        assert!(!back.contains("resp_0bd94bc792496946016aa1f8"), "{back}");
+        assert!(back.contains(sid), "prompt cache key mapped back: {back}");
+        let token = back
+            .split("\"id\":\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            open_response_id(&idmap, &token).as_deref(),
+            Some("resp_0bd94bc792496946016aa1f8")
+        );
     }
 
     #[test]

@@ -184,7 +184,17 @@ same telemetry. codexs only
 * rewrites `<timezone>` and `<current_date>` inside `<environment_context>` to
   the egress IP's zone — detected through the outbound proxy (ipapi.co, ipinfo.io,
   ip-api.com; refreshed every 6 h) or fixed with `codex.timezone` / `--timezone`,
-* drops `x-asxs-*`, hop-by-hop and forwarded-for headers and the `asxs` body object.
+* drops `x-asxs-*`, hop-by-hop and forwarded-for headers and the `asxs` body object,
+* maps identifiers both ways so neither side sees the other's: the client's
+  installation / session / thread / turn ids (`session_id`, `x-codex-*` headers,
+  `client_metadata`, `prompt_cache_key`) become deterministic account-keyed
+  stand-ins upstream (same client session → same upstream ids, so routing stays
+  sticky and the prompt cache stays warm); upstream's `x-codex-turn-state` blob
+  and `resp_…` ids reach the client only as sealed tokens, opened again when the
+  client echoes them (turn-state header, `previous_response_id`); upstream
+  request ids (`x-oai-request-id`, `cf-ray`) are not relayed and the client's
+  `x-oai-attestation` (bound to its own installation) is not forwarded. The key
+  is `<CODEX_HOME>/asxs-idmap.key`, created on first use.
 
 The upstream stream is relayed byte-for-byte. Raw forwarding serves the static
 accounts only (not client-supplied credentials) and goes to

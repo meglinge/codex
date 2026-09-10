@@ -113,7 +113,7 @@ impl RawForwarder {
             account = %account.id, model = %model, stream, tz = tz.as_deref().unwrap_or("-"),
             status = resp.status().as_u16(), "raw forward"
         );
-        Ok(Some(relay(resp)))
+        Ok(Some(relay(resp, stream)))
     }
 
     fn should_forward(&self, headers: &HeaderMap, body: &Value) -> bool {
@@ -477,8 +477,9 @@ fn drop_header(name: &HeaderName) -> bool {
         || n.starts_with("x-forwarded-")
 }
 
-/// Relay status, headers and the body stream untouched.
-fn relay(resp: reqwest::Response) -> Response {
+/// Relay status, headers and the body stream untouched. Upstream omits
+/// `content-type` on SSE responses; add one so SDK clients can tell.
+fn relay(resp: reqwest::Response, stream: bool) -> Response {
     let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut hm = HeaderMap::new();
     for (k, v) in resp.headers() {
@@ -494,6 +495,16 @@ fn relay(resp: reqwest::Response) -> Response {
         ) {
             hm.append(name, value);
         }
+    }
+    if !hm.contains_key(header::CONTENT_TYPE) {
+        hm.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(if stream {
+                "text/event-stream; charset=utf-8"
+            } else {
+                "application/json"
+            }),
+        );
     }
     let mut out = Response::builder().status(status);
     if let Some(h) = out.headers_mut() {
